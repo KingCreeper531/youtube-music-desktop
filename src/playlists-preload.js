@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('pl', {
   play: (opts) => ipcRenderer.invoke('pl:play', opts),
   queue: () => ipcRenderer.invoke('pl:queue'),
   importFile: () => ipcRenderer.invoke('pl:import-file'),
+  search: (query) => ipcRenderer.invoke('pl:search', query),
+  setMatch: (id, index, match) => ipcRenderer.invoke('pl:set-match', id, index, match),
   onChanged: (fn) => ipcRenderer.on('pl:changed', (_e, ev) => fn(ev)),
   onQueue: (fn) => ipcRenderer.on('pl:queue', (_e, q) => fn(q)),
 });

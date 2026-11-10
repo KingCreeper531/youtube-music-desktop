@@ -9,6 +9,7 @@ const updater = require('./updater');
 const library = require('./library');
 const spotify = require('./spotify');
 const playlists = require('./playlists');
+const ytmSearch = require('./ytm-search');
 
 library.registerScheme(); // must happen before the app is ready
 
@@ -345,80 +346,157 @@ function openSettings() {
 
 // ---------------------------------------------------------------- tray
 function sendControl(action) {
-  if (activeSource === 'local' && libraryWin) libraryWin.webContents.send('lib:control', action);
-  else if (queue && (action === 'next' || action === 'previous')) queueStep(action === 'next' ? 1 : -1);
+  if (queue && (action === 'next' || action === 'previous')) queueStep(action === 'next' ? 1 : -1);
+  else if (activeSource === 'local' && libraryWin) libraryWin.webContents.send('lib:control', action);
   else win?.webContents.send('tb:control', action);
 }
 
 // ---------------------------------------------------------------- imported playlist queue
-// Plays an imported playlist's matched songs in order inside YouTube Music.
-let queue = null; // { playlistId, name, ids, index, advancing }
+// Plays an imported playlist's matched songs in order. Each entry is either a
+// YouTube Music song ("y:<videoId>", played in the main window) or one of your
+// own files ("l:<id>", played by the My Music player).
+let queue = null; // { playlistId, name, keys, index, advancing, exitTimer }
+const currentKey = () => (queue ? queue.keys[queue.index] : null);
+const isLocalKey = (k) => !!k && k.startsWith('l:');
 
 function setQueueFlag() {
-  win?.webContents.send('tb:queue', !!queue);
-  playlistsWin?.webContents.send('pl:queue', queue && { playlistId: queue.playlistId, videoId: queue.ids[queue.index] });
+  const k = currentKey();
+  win?.webContents.send('tb:queue', !!queue && !isLocalKey(k));
+  libraryWin?.webContents.send('lib:queue', !!queue && isLocalKey(k));
+  playlistsWin?.webContents.send('pl:queue', queue && { playlistId: queue.playlistId, key: k });
 }
 
-function playPlaylist({ id, videoId, shuffle }) {
-  let ids = playlists.videoIds(id);
-  if (!ids.length) return false;
+function leaveQueue(why) {
+  if (!queue) return;
+  clearTimeout(queue.exitTimer);
+  queue = null;
+  setQueueFlag();
+  log(why);
+}
+
+function playPlaylist({ id, key, shuffle }) {
+  let keys = playlists.keys(id);
+  if (!keys.length) return false;
   if (shuffle) {
-    for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
+    for (let i = keys.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [keys[i], keys[j]] = [keys[j], keys[i]]; }
   }
-  let index = videoId ? Math.max(0, ids.indexOf(videoId)) : 0;
-  if (shuffle && videoId) { ids = [ids[index], ...ids.filter((_, i) => i !== index)]; index = 0; }
-  queue = { playlistId: id, name: playlists.get(id)?.name, ids, index, advancing: true };
-  if (localNp && !localNp.paused) libraryWin?.webContents.send('lib:control', 'pause');
-  activeSource = 'ytm';
-  showWindow();
+  let index = key ? Math.max(0, keys.indexOf(key)) : 0;
+  if (shuffle && key) { keys = [keys[index], ...keys.filter((_, i) => i !== index)]; index = 0; }
+  if (queue) clearTimeout(queue.exitTimer);
+  queue = { playlistId: id, name: playlists.get(id)?.name, keys, index, advancing: true, exitTimer: null };
   queueLoad();
-  log(`Playing imported playlist "${queue.name}" (${ids.length} songs)`);
+  log(`Playing imported playlist "${queue.name}" (${keys.length} songs)`);
   return true;
 }
 
-function queueLoad() {
+async function queueLoad() {
+  const k = currentKey();
   queue.advancing = true; // ignore stray songs until the requested one is playing
-  win?.loadURL(`https://music.youtube.com/watch?v=${queue.ids[queue.index]}`);
+  clearTimeout(queue.exitTimer);
+  queue.exitTimer = null;
+  if (isLocalKey(k)) {
+    if (ytmNp && !ytmNp.paused) win?.webContents.send('tb:control', 'pause');
+    activeSource = 'local';
+    const lw = await ensureLibrary();
+    lw.webContents.send('lib:control', `playid:${k.slice(2)}`);
+  } else {
+    if (localNp && !localNp.paused) libraryWin?.webContents.send('lib:control', 'pause');
+    activeSource = 'ytm';
+    if (!win) createWindow();
+    win.loadURL(`https://music.youtube.com/watch?v=${k.slice(2)}`);
+  }
   setQueueFlag();
 }
 
 function queueStep(dir) {
   if (!queue) return;
-  if (dir < 0 && ytmNp && ytmNp.currentTime > 3) { // like a normal player: restart the song first
-    win?.webContents.send('tb:control', 'restart');
-    return;
+  const k = currentKey();
+  if (dir < 0) { // like a normal player: restart the song first
+    if (isLocalKey(k) && localNp && localNp.currentTime > 3) { libraryWin?.webContents.send('lib:control', 'restart'); return; }
+    if (!isLocalKey(k) && ytmNp && ytmNp.currentTime > 3) { win?.webContents.send('tb:control', 'restart'); return; }
   }
   const next = queue.index + dir;
-  if (next >= queue.ids.length) { // finished: let YouTube Music carry on with its own radio
-    log('Imported playlist finished');
-    queue = null;
-    setQueueFlag();
+  if (next >= queue.keys.length) { // finished: YouTube Music carries on with its own radio
+    leaveQueue('Imported playlist finished');
     return;
   }
   queue.index = Math.max(0, next);
   queueLoad();
 }
 
+/** YouTube Music reported a song. */
+// ---------------------------------------------------------------- Song | Video switch
+const counterpartCache = new Map();
+
+async function switchVersion(info) {
+  const { videoId, title, artist, type } = info || {};
+  if (!/^[\w-]{11}$/.test(videoId || '') || !['song', 'video'].includes(type)) return { ok: false };
+  let other = counterpartCache.get(videoId);
+  if (other === undefined) {
+    try {
+      other = await ytmSearch.findCounterpart({ videoId, title: String(title || ''), artist: String(artist || ''), type }, net.fetch.bind(net));
+    } catch {
+      return { ok: false };
+    }
+    counterpartCache.set(videoId, other);
+    if (other) counterpartCache.set(other.videoId, { ...info, videoId }); // switching back is instant
+  }
+  if (!other) return { ok: false };
+  const t = Math.max(0, Number(info.currentTime) || 0);
+  // Inside an imported playlist, the other version takes this song's place
+  if (queue && currentKey() === `y:${videoId}`) {
+    queue.keys[queue.index] = `y:${other.videoId}`;
+    queue.advancing = true;
+    setQueueFlag();
+  }
+  log(`Switched ${type === 'song' ? 'song → video' : 'video → song'}: "${title}"`);
+  // Play the other version in place, starting at the same moment
+  win?.webContents.send('tb:control', `load:${other.videoId}:${Math.floor(t)}`);
+  return { ok: true, videoId: other.videoId };
+}
+
 function queueOnState(np) {
   if (!queue || !np?.videoId) return;
-  const at = queue.ids.indexOf(np.videoId);
-  if (np.videoId === queue.ids[queue.index]) { queue.advancing = false; return; }
+  const k = currentKey();
+  if (isLocalKey(k)) {
+    // The playlist is on one of your files; starting something in YouTube Music ends the playlist
+    if (!np.paused && !queue.advancing) leaveQueue('Left imported playlist');
+    return;
+  }
+  const yk = `y:${np.videoId}`;
+  if (yk === k) { queue.advancing = false; return; }
   if (queue.advancing || queue.exitTimer) return;
+  const at = queue.keys.indexOf(yk);
   if (at >= 0) { queue.index = at; setQueueFlag(); return; } // moved within the playlist
   // A song outside the playlist started. If that's YouTube Music's autoplay after
   // our song ended, the "ended" signal arrives within a moment; otherwise you
   // picked something else, so stop following the playlist.
   const q = queue;
-  q.exitTimer = setTimeout(() => {
-    if (queue === q) { queue = null; setQueueFlag(); log('Left imported playlist'); }
-  }, 2000);
+  q.exitTimer = setTimeout(() => { if (queue === q) leaveQueue('Left imported playlist'); }, 2000);
+}
+
+/** My Music reported a song. */
+function queueOnLocalState(np) {
+  if (!queue || !np?.id) return;
+  if (`l:${np.id}` === currentKey()) queue.advancing = false;
 }
 
 function queueOnEnded(videoId) {
-  if (!queue || videoId !== queue.ids[queue.index]) return;
+  if (!queue || `y:${videoId}` !== currentKey()) return;
   clearTimeout(queue.exitTimer);
   queue.exitTimer = null;
   queueStep(1);
+}
+
+function queueOnLocalEnded(id) {
+  if (queue && `l:${id}` === currentKey()) queueStep(1);
+}
+
+/** Makes sure the My Music player exists (hidden if it wasn't open) and has loaded. */
+function ensureLibrary() {
+  if (libraryWin && !libraryWin.webContents.isLoading()) return Promise.resolve(libraryWin);
+  if (!libraryWin) openLibrary({ show: false });
+  return new Promise((resolve) => libraryWin.webContents.once('did-finish-load', () => resolve(libraryWin)));
 }
 
 // ---------------------------------------------------------------- Playlists window
@@ -452,8 +530,8 @@ function openPlaylists() {
 
 // ---------------------------------------------------------------- My Music
 let libraryWin = null;
-function openLibrary() {
-  if (libraryWin) { libraryWin.show(); libraryWin.focus(); return; }
+function openLibrary({ show = true } = {}) {
+  if (libraryWin) { if (show) { libraryWin.show(); libraryWin.focus(); } return; }
   libraryWin = new BrowserWindow({
     width: 1000,
     height: 680,
@@ -463,11 +541,13 @@ function openLibrary() {
     icon: ICON,
     backgroundColor: '#030303',
     autoHideMenuBar: true,
+    show,
     webPreferences: {
       preload: path.join(__dirname, 'library-preload.js'),
       contextIsolation: true,
       sandbox: true,
       backgroundThrottling: false,
+      autoplayPolicy: 'no-user-gesture-required', // playlists can start your files without a click
     },
   });
   libraryWin.setMenuBarVisibility(false);
@@ -585,6 +665,7 @@ function onYtmState(np) {
 
 function onLocalState(np) {
   localNp = np;
+  queueOnLocalState(np);
   if (np && !np.paused) {
     if (ytmNp && !ytmNp.paused) win?.webContents.send('tb:control', 'pause');
     activeSource = 'local';
@@ -656,8 +737,14 @@ ipcMain.handle('pl:get', (_e, id) => playlists.get(String(id)));
 ipcMain.handle('pl:remove', (_e, id) => { if (queue?.playlistId === id) { queue = null; setQueueFlag(); } playlists.remove(String(id)); });
 ipcMain.handle('pl:rename', (_e, id, name) => playlists.rename(String(id), String(name)));
 ipcMain.handle('pl:retry', (_e, id) => playlists.retry(String(id)));
-ipcMain.handle('pl:play', (_e, opts) => playPlaylist({ id: String(opts?.id), videoId: opts?.videoId, shuffle: !!opts?.shuffle }));
-ipcMain.handle('pl:queue', () => queue && { playlistId: queue.playlistId, videoId: queue.ids[queue.index] });
+ipcMain.handle('pl:play', (_e, opts) => playPlaylist({ id: String(opts?.id), key: opts?.key ? String(opts.key) : null, shuffle: !!opts?.shuffle }));
+ipcMain.handle('pl:queue', () => queue && { playlistId: queue.playlistId, key: currentKey() });
+ipcMain.handle('tb:switch-version', (_e, info) => switchVersion(info));
+ipcMain.handle('pl:search', (_e, query) => playlists.searchCandidates(String(query || '').slice(0, 200)));
+ipcMain.handle('pl:set-match', (_e, id, index, match) => playlists.setMatch(String(id), Number(index), match));
+ipcMain.on('lib:ended', (_e, id) => queueOnLocalEnded(String(id)));
+ipcMain.on('lib:queue-step', (_e, dir) => queueStep(dir > 0 ? 1 : -1));
+ipcMain.on('lib:queue-exit', () => leaveQueue('Left imported playlist'));
 ipcMain.handle('pl:import-file', async () => {
   const res = await dialog.showOpenDialog(playlistsWin || win, {
     title: 'Import a playlist file',
@@ -702,10 +789,12 @@ ipcMain.handle('sp:import', async (_e, items) => {
 });
 ipcMain.on('lib:now-playing', (_e, np) => onLocalState(np));
 ipcMain.handle('lib:list', () => library.list());
-ipcMain.handle('lib:add', () => library.pickAndImport(libraryWin || win));
-ipcMain.handle('lib:add-paths', (_e, paths) => {
+// New files in My Music may be songs your imported playlists were missing
+const afterLibraryAdd = (res) => { if (res?.added) playlists.retryAllNotFound(); return res; };
+ipcMain.handle('lib:add', async () => afterLibraryAdd(await library.pickAndImport(libraryWin || win)));
+ipcMain.handle('lib:add-paths', async (_e, paths) => {
   if (!Array.isArray(paths)) return { added: 0, skipped: 0 };
-  return library.importFiles(paths.filter((p) => typeof p === 'string' && p.length < 1024));
+  return afterLibraryAdd(await library.importFiles(paths.filter((p) => typeof p === 'string' && p.length < 1024)));
 });
 ipcMain.handle('lib:remove', (_e, id) => library.remove(String(id)));
 ipcMain.on('tb:ad-skipped', (_e, how) => log(`Ad handled (${how})`));

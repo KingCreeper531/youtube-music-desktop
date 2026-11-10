@@ -4,6 +4,19 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const ytm = require('./ytm-search');
+const library = require('./library');
+
+/** Look for the song among your own files in My Music. */
+function findLocal(track) {
+  const m = ytm.bestMatch(track, library.list());
+  return m ? { source: 'local', localId: m.id, title: m.title, artist: m.artist, duration: m.duration } : null;
+}
+
+/** A queue key for a matched song: "y:<videoId>" (YouTube Music) or "l:<id>" (My Music). */
+function keyOf(match) {
+  if (!match) return null;
+  return match.source === 'local' ? `l:${match.localId}` : `y:${match.videoId}`;
+}
 
 const file = () => path.join(app.getPath('userData'), 'playlists.json');
 let lists = null;
@@ -90,10 +103,46 @@ function retry(id) {
   kick();
 }
 
-/** The matched YouTube Music video ids of a playlist, in order. */
-function videoIds(id) {
+/** Re-check every "not found" song, e.g. after new files were added to My Music. */
+function retryAllNotFound() {
+  let any = false;
+  for (const l of load()) {
+    for (const t of l.tracks) if (t.status === 'notfound') { t.status = 'pending'; any = true; }
+  }
+  if (any) { save(); onChange({ type: 'list' }); kick(); }
+}
+
+/** Set a match by hand (from the "Find a match" window). */
+function setMatch(id, index, match) {
   const l = load().find((x) => x.id === id);
-  return l ? l.tracks.filter((t) => t.status === 'matched').map((t) => t.match.videoId) : [];
+  const t = l?.tracks[index];
+  if (!t || !match) return null;
+  if (match.source === 'local') {
+    const f = library.list().find((x) => x.id === match.localId);
+    if (!f) return null;
+    t.match = { source: 'local', localId: f.id, title: f.title, artist: f.artist, duration: f.duration, manual: true };
+  } else {
+    if (!/^[\w-]{11}$/.test(match.videoId || '')) return null;
+    t.match = {
+      source: 'ytm', videoId: match.videoId, title: String(match.title || ''), artist: String(match.artist || ''),
+      duration: Number(match.duration) || 0, thumbnail: String(match.thumbnail || ''), manual: true,
+    };
+  }
+  t.status = 'matched';
+  save();
+  onChange({ type: 'playlist', id });
+  onChange({ type: 'progress', id, summary: summary(l) });
+  return t.match;
+}
+
+/** Queue keys of a playlist's matched songs, in order (skips My Music files that were removed). */
+function keys(id) {
+  const l = load().find((x) => x.id === id);
+  if (!l) return [];
+  const localIds = new Set(library.list().map((x) => x.id));
+  return l.tracks
+    .filter((t) => t.status === 'matched' && (t.match.source !== 'local' || localIds.has(t.match.localId)))
+    .map((t) => keyOf(t.match));
 }
 
 // ---------------------------------------------------------------- background matching
@@ -125,8 +174,12 @@ async function kick() {
           cache.set(key, m);
           await new Promise((r) => setTimeout(r, 250)); // be gentle with YouTube
         }
-        t.status = m ? 'matched' : 'notfound';
-        t.match = m ? { videoId: m.videoId, title: m.title, artist: m.artist, duration: m.duration, thumbnail: m.thumbnail } : null;
+        if (m) {
+          t.match = { source: 'ytm', videoId: m.videoId, title: m.title, artist: m.artist, duration: m.duration, thumbnail: m.thumbnail };
+        } else {
+          t.match = findLocal(t); // not on YouTube Music: maybe it's one of your own files
+        }
+        t.status = t.match ? 'matched' : 'notfound';
         failures = 0;
       } catch (e) {
         t.status = 'pending';
@@ -145,4 +198,30 @@ async function kick() {
   }
 }
 
-module.exports = { init, list, get, add, remove, rename, retry, videoIds };
+/** Search for the "Find a match" window: YouTube Music results plus your own files. */
+async function searchCandidates(query) {
+  const q = String(query || '').trim();
+  if (!q) return { ytm: [], local: [] };
+  let found = [];
+  try {
+    const [songs, all] = await Promise.all([
+      ytm.search(q, net.fetch.bind(net), 'songs').catch(() => []),
+      ytm.search(q, net.fetch.bind(net), 'all').catch(() => []),
+    ]);
+    const seen = new Set();
+    found = [...songs, ...all].filter((r) => !seen.has(r.videoId) && seen.add(r.videoId)).slice(0, 15);
+  } catch { /* offline */ }
+  const words = ytm.normalize(q).split(' ').filter(Boolean);
+  const local = library.list()
+    .map((f) => {
+      const hay = ytm.normalize(`${f.title} ${f.artist} ${f.album}`);
+      return { f, hits: words.filter((w) => hay.includes(w)).length };
+    })
+    .filter((x) => x.hits > 0)
+    .sort((a, b) => b.hits - a.hits)
+    .slice(0, 10)
+    .map(({ f }) => ({ localId: f.id, title: f.title, artist: f.artist, duration: f.duration, art: f.art }));
+  return { ytm: found, local };
+}
+
+module.exports = { init, list, get, add, remove, rename, retry, retryAllNotFound, setMatch, keys, keyOf, searchCandidates };

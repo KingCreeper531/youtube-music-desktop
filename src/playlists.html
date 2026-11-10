@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src https: data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src https: data: tbmedia:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
 <title>Playlists</title>
 <style>
   :root { --bg: #030303; --side: #0f0f0f; --row: #181818; --line: #262626; --text: #fff; --muted: #aaa; --red: #ff0033; --ok: #3ddc84; --warn: #ffb020; }
@@ -39,7 +39,12 @@
   .head .meta { color: var(--muted); }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
   #tracks { overflow-y: auto; flex: 1; padding: 8px 16px 24px; }
-  .tr { display: grid; grid-template-columns: 32px minmax(0,1fr) 20px minmax(0,1fr) 48px; gap: 12px; align-items: center;
+  .badge { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 8px; background: #2a2a2a; color: #ccc; font-size: 11px; vertical-align: 1px; }
+  .chg { visibility: hidden; background: none; border: 1px solid #3a3a3a; border-radius: 12px; padding: 3px 10px; font-size: 12px; color: #ccc; }
+  .tr:hover .chg { visibility: visible; }
+  .chg:hover { background: #2a2a2a; color: #fff; }
+  .section { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; margin: 12px 4px 4px; }
+  .tr { display: grid; grid-template-columns: 32px minmax(0,1fr) 20px minmax(0,1fr) 48px 64px; gap: 12px; align-items: center;
     padding: 7px 12px; border-radius: 6px; }
   .tr.can { cursor: pointer; }
   .tr.can:hover { background: var(--row); }
@@ -157,7 +162,7 @@
       if (name && name !== d.name) { await pl.rename(d.id, name); await loadLists(); }
     });
 
-    const meta = `${d.total} songs · ${d.matched} found on YouTube Music` +
+    const meta = `${d.total} songs · ${d.matched} ready to play` +
       (d.notFound ? ` · ${d.notFound} not found` : '') + (d.pending ? ` · matching ${d.pending} more…` : '');
     const play = el('button', { className: 'primary', textContent: '▶ Play', disabled: !d.matched });
     play.addEventListener('click', () => pl.play({ id: d.id }));
@@ -178,22 +183,90 @@
 
     const box = el('div', { id: 'tracks' });
     d.tracks.forEach((t, i) => {
-      const m = t.match;
-      const isNow = nowPlaying && nowPlaying.playlistId === d.id && m && nowPlaying.videoId === m.videoId;
+      const m = t.status === 'matched' ? t.match : null;
+      const key = keyOf(m);
+      const isNow = nowPlaying && nowPlaying.playlistId === d.id && key && nowPlaying.key === key;
       let right;
-      if (t.status === 'matched') right = el('div', {}, el('div', { className: 't2', textContent: m.title, title: m.title }), el('div', { className: 'a2', textContent: m.artist }));
-      else if (t.status === 'notfound') right = el('div', { className: 'nf', textContent: 'Not found on YouTube Music' });
-      else right = el('div', { className: 'wait', textContent: 'Searching…' });
-      const row = el('div', { className: 'tr' + (m ? ' can' : '') + (isNow ? ' now' : '') },
+      if (m) {
+        const badge = m.source === 'local' ? el('span', { className: 'badge', textContent: 'My Music' }) : null;
+        right = el('div', {}, el('div', { className: 't2', title: m.title }, m.title, badge), el('div', { className: 'a2', textContent: m.artist }));
+      } else if (t.status === 'notfound') {
+        right = el('div', { className: 'nf', textContent: 'Not found. Click to pick a match' });
+      } else {
+        right = el('div', { className: 'wait', textContent: 'Searching…' });
+      }
+      const change = t.status === 'searching' || t.status === 'pending' ? el('div') : el('button', { className: 'chg', textContent: 'Change', title: 'Pick a different match' });
+      if (change.tagName === 'BUTTON') change.addEventListener('click', (e) => { e.stopPropagation(); openPicker(d, i); });
+      const row = el('div', { className: 'tr can' + (isNow ? ' now' : '') },
         el('div', { className: 'num', textContent: i + 1 }),
         el('div', {}, el('div', { className: 't1', textContent: t.title, title: t.title }), el('div', { className: 'a1', textContent: t.artist })),
         el('div', { className: 'arrow', textContent: '→' }),
         right,
-        el('div', { className: 'dur', textContent: m && m.duration ? fmt(m.duration) : (t.durationMs ? fmt(t.durationMs / 1000) : '') }));
-      if (m) row.addEventListener('click', () => pl.play({ id: d.id, videoId: m.videoId }));
+        el('div', { className: 'dur', textContent: m && m.duration ? fmt(m.duration) : (t.durationMs ? fmt(t.durationMs / 1000) : '') }),
+        change);
+      row.addEventListener('click', () => {
+        if (m) pl.play({ id: d.id, key });
+        else if (t.status === 'notfound') openPicker(d, i);
+      });
       box.appendChild(row);
     });
     main.appendChild(box);
+  }
+
+  function keyOf(m) {
+    if (!m) return null;
+    return m.source === 'local' ? 'l:' + m.localId : 'y:' + m.videoId;
+  }
+
+  // ------------------------------------------------------------ "Find a match"
+  async function openPicker(d, index) {
+    const t = d.tracks[index];
+    modal.classList.add('open');
+    card.innerHTML = `
+      <h3>Find a match</h3>
+      <p class="sub" id="pkFor"></p>
+      <div style="display:flex;gap:8px"><input type="text" id="pkQ" spellcheck="false"><button class="primary" id="pkGo">Search</button></div>
+      <div id="pkRes" style="margin-top:12px"></div>
+      <div class="row2"><button class="ghost" id="pkClose">Cancel</button></div>`;
+    $('pkFor').textContent = `${t.title} by ${t.artist}`;
+    $('pkQ').value = `${t.title} ${String(t.artist).split(',')[0]}`;
+    $('pkClose').onclick = closeModal;
+    const run = async () => {
+      const res = $('pkRes');
+      res.innerHTML = '<p class="muted">Searching…</p>';
+      const r = await pl.search($('pkQ').value);
+      res.replaceChildren();
+      const pick = async (match) => {
+        await pl.setMatch(d.id, index, match);
+        closeModal();
+        await loadDetail();
+        renderLists();
+      };
+      if (r.local.length) {
+        res.appendChild(el('div', { className: 'section', textContent: 'From My Music' }));
+        for (const f of r.local) {
+          const img = f.art ? el('img', { src: f.art, alt: '' }) : el('div', { className: 'ph' });
+          const row = el('div', { className: 'sp' }, img,
+            el('div', { className: 'n' }, el('div', { textContent: f.title }), el('div', { textContent: `${f.artist} · ${fmt(f.duration)}` })),
+            el('button', { className: 'ghost', textContent: 'Use' }));
+          row.addEventListener('click', () => pick({ source: 'local', localId: f.localId }));
+          res.appendChild(row);
+        }
+      }
+      res.appendChild(el('div', { className: 'section', textContent: 'On YouTube Music' }));
+      if (!r.ytm.length) res.appendChild(el('p', { className: 'muted', textContent: 'No results. Try different words.' }));
+      for (const v of r.ytm) {
+        const img = v.thumbnail ? el('img', { src: v.thumbnail, alt: '' }) : el('div', { className: 'ph' });
+        const row = el('div', { className: 'sp' }, img,
+          el('div', { className: 'n' }, el('div', { textContent: v.title }), el('div', { textContent: [v.artist, v.album, v.duration ? fmt(v.duration) : ''].filter(Boolean).join(' · ') })),
+          el('button', { className: 'ghost', textContent: 'Use' }));
+        row.addEventListener('click', () => pick({ source: 'ytm', videoId: v.videoId, title: v.title, artist: v.artist, duration: v.duration, thumbnail: v.thumbnail }));
+        res.appendChild(row);
+      }
+    };
+    $('pkGo').onclick = run;
+    $('pkQ').addEventListener('keydown', (e) => { if (e.key === 'Enter') run(); });
+    run();
   }
 
   // ------------------------------------------------------------ Spotify import

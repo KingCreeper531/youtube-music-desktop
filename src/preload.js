@@ -132,6 +132,8 @@ function pageScript(initialCfg) {
       // 1 = playing, 3 = buffering; everything else counts as paused
       paused: !(state === 1 || state === 3) || adShowing,
       adShowing,
+      // MUSIC_VIDEO_TYPE_ATV = song, _OMV / _UGC = music video (used by the Song | Video switch)
+      musicVideoType: (() => { try { return p.getPlayerResponse().videoDetails.musicVideoType || ''; } catch { return ''; } })(),
     });
   }, 1000);
 
@@ -146,6 +148,27 @@ function pageScript(initialCfg) {
       else if (action === 'next') p.nextVideo();
       else if (action === 'previous') p.previousVideo();
       else if (action === 'restart') p.seekTo(0, true);
+      else if (typeof action === 'string' && action.startsWith('seek:')) p.seekTo(Number(action.slice(5)) || 0, true);
+      else if (typeof action === 'string' && action.startsWith('load:')) {
+        // Song | Video switch: play the other version in place (a page load would
+        // make YouTube Music swap straight back to the song for free accounts)
+        const [, id, t] = action.split(':');
+        const target = Number(t) || 0;
+        if (/^[\w-]{11}$/.test(id)) {
+          p.loadVideoById({ videoId: id, startSeconds: target });
+          // Songs ignore startSeconds: once the new one is really playing, jump to the same moment
+          let tries = 0;
+          const fix = setInterval(() => {
+            if (++tries > 40) { clearInterval(fix); return; }
+            try {
+              if (p.getVideoData().video_id !== id || p.getPlayerState() !== 1) return;
+              clearInterval(fix);
+              const dur = p.getDuration();
+              if (target > 2 && Math.abs(p.getCurrentTime() - target) > 3 && (!dur || target < dur - 3)) p.seekTo(target, true);
+            } catch { /* ignore */ }
+          }, 250);
+        }
+      }
     } catch { /* ignore */ }
   });
   document.addEventListener('tb:config', (e) => {
@@ -281,12 +304,88 @@ setInterval(() => {
 
 // -------------------------------------------------------- now-playing bridge
 let adShowing = false;
+let latestState = null;
+
+// ---------------------------------------------------------- Song | Video switch
+// Free accounts don't get YouTube Music's own switch. Both versions are free to
+// play, so this finds the other one and jumps to it at the same moment.
+const AV_ID = 'tb-av-switch';
+let avBusy = false;
+let avMessage = '';
+function avKind(s) {
+  if (!s || !s.videoId) return null;
+  if (s.musicVideoType === 'MUSIC_VIDEO_TYPE_ATV') return 'song';
+  if (/OMV|UGC/.test(s.musicVideoType || '')) return 'video';
+  return null; // podcasts etc.
+}
+// In "song" mode YouTube Music covers the player with the album art; show the
+// actual video whenever a music video is playing.
+webFrame.insertCSS(`
+  html[data-tb-video] ytmusic-player #song-image { display: none !important; }
+  html[data-tb-video] ytmusic-player #song-video { display: block !important; }
+`);
+function renderAvSwitch() {
+  const kind = avKind(latestState);
+  document.documentElement.toggleAttribute('data-tb-video', kind === 'video');
+  const host = document.querySelector('ytmusic-player-bar .middle-controls-buttons')
+    || document.querySelector('ytmusic-player-bar #right-controls');
+  let box = document.getElementById(AV_ID);
+  if (!kind || !host) { if (box) box.remove(); return; }
+  if (!box) {
+    box = document.createElement('div');
+    box.id = AV_ID;
+    box.style.cssText = 'display:inline-flex;align-items:center;margin:0 10px;padding:2px;border-radius:16px;' +
+      'background:rgba(255,255,255,.1);font:500 12px/1 Roboto,"Segoe UI",sans-serif;flex-shrink:0;user-select:none;';
+    for (const k of ['song', 'video']) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.dataset.kind = k;
+      b.textContent = k === 'song' ? 'Song' : 'Video';
+      b.style.cssText = 'border:0;border-radius:14px;padding:6px 12px;cursor:pointer;background:transparent;color:#aaa;font:inherit;';
+      b.addEventListener('click', (e) => { e.stopPropagation(); switchTo(k); });
+      box.appendChild(b);
+    }
+  }
+  if (box.parentElement !== host) host.insertBefore(box, host.firstChild);
+  for (const b of box.querySelectorAll('button')) {
+    const on = b.dataset.kind === kind;
+    b.style.background = on ? '#fff' : 'transparent';
+    b.style.color = on ? '#000' : '#ccc';
+    b.style.opacity = avBusy && !on ? '0.6' : '1';
+  }
+  box.title = avMessage || (kind === 'song' ? 'Playing the song. Click Video for the music video.' : 'Playing the music video. Click Song for the audio version.');
+}
+async function switchTo(kind) {
+  const s = latestState;
+  if (avBusy || !s || avKind(s) === kind || avKind(s) == null) return;
+  const v = document.querySelector('video');
+  avBusy = true;
+  avMessage = 'Looking for the other version…';
+  renderAvSwitch();
+  try {
+    const res = await ipcRenderer.invoke('tb:switch-version', {
+      videoId: s.videoId, title: s.title, artist: s.artist, type: avKind(s), currentTime: v ? v.currentTime : 0,
+    });
+    avMessage = res && res.ok ? '' : (kind === 'video' ? 'No music video found for this song' : 'No song version found for this video');
+  } catch {
+    avMessage = 'Couldn\'t switch right now';
+  }
+  avBusy = false;
+  renderAvSwitch();
+  if (avMessage) {
+    const box = document.getElementById(AV_ID);
+    if (box) { box.style.outline = '1px solid #ff8080'; setTimeout(() => { box.style.outline = ''; avMessage = ''; renderAvSwitch(); }, 3000); }
+  }
+}
+setInterval(renderAvSwitch, 2000);
 let lastSent = '';
 let lastSentAt = 0;
 document.addEventListener('tb:state', (e) => {
   let state = null;
   try { state = JSON.parse(e.detail); } catch { return; }
   adShowing = !!(state && state.adShowing);
+  latestState = state;
+  renderAvSwitch();
   if (state) loadSegments(state.videoId);
   // Send when anything but the clock changes, or every 5s to correct drift.
   const key = state ? JSON.stringify({ ...state, currentTime: 0 }) : 'null';
