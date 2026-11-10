@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- White ring and play triangle on the red adaptive-icon background.
+     Proportions match the desktop icon (960px grid scaled to a 36dp radius). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.6"
+        android:fillColor="#00000000"
+        android:pathData="M54,36.05 a17.95,17.95 0 1,1 0,35.9 a17.95,17.95 0 1,1 0,-35.9 z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M47.5,44.6 L47.5,63.4 L63.4,54 Z" />
+</vector>

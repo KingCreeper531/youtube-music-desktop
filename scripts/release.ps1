@@ -34,10 +34,16 @@ Write-Host "Releasing v$version" -ForegroundColor Green
 if (Test-Path dist) { Remove-Item -Recurse -Force dist }
 Run npx @('electron-builder', '--win', '--publish', 'never')
 
+# Android APK (same version number, read from package.json by Gradle)
+Push-Location android
+try { Run '.\gradlew.bat' @('assembleRelease', '--no-daemon', '-q') } finally { Pop-Location }
+Copy-Item "android\app\build\outputs\apk\release\YouTube-Music-Android-$version.apk" "dist\" -Force
+
 $assets = @(
   "dist\YouTube-Music-Setup-$version.exe",
   "dist\YouTube-Music-Setup-$version.exe.blockmap",
   "dist\YouTube-Music-Portable-$version.exe",
+  "dist\YouTube-Music-Android-$version.apk",
   'dist\latest.yml'
 )
 foreach ($a in $assets) { if (-not (Test-Path $a)) { throw "Missing build output: $a" } }
@@ -53,6 +59,7 @@ if (-not $Notes) {
 ## Download
 - **YouTube-Music-Setup-$version.exe**: installer (recommended). Updates itself with the green Update button.
 - **YouTube-Music-Portable-$version.exe**: runs without installing.
+- **YouTube-Music-Android-$version.apk**: Android app. Open it on your phone to install, then use its green Update button for future versions.
 
 Windows may show a SmartScreen warning because the app isn't code-signed. Click **More info**, then **Run anyway**.
 "@

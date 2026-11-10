@@ -1,0 +1,66 @@
+import groovy.json.JsonSlurper
+
+plugins {
+    id 'com.android.application'
+}
+
+// One version number for desktop and Android: read it from ../package.json
+def pkg = new JsonSlurper().parse(rootProject.file('../package.json'))
+def appVersion = pkg.version as String
+def (major, minor, patch) = appVersion.tokenize('.').collect { it.replaceAll(/\D.*/, '') as int }
+
+// Release signing key lives outside the repo (see ~/.gradle/gradle.properties).
+// Every update must be signed with the same key or Android refuses to install it.
+def hasReleaseKey = project.hasProperty('YTM_KEYSTORE') && file(project.property('YTM_KEYSTORE')).exists()
+
+android {
+    namespace 'io.github.kingcreeper531.ytmusic'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'io.github.kingcreeper531.ytmusic'
+        minSdk 26
+        targetSdk 35
+        versionCode major * 10000 + minor * 100 + patch
+        versionName appVersion
+        buildConfigField 'String', 'GITHUB_REPO', '"KingCreeper531/youtube-music-desktop"'
+    }
+
+    signingConfigs {
+        if (hasReleaseKey) {
+            release {
+                storeFile file(project.property('YTM_KEYSTORE'))
+                storePassword project.property('YTM_KEYSTORE_PASSWORD')
+                keyAlias project.property('YTM_KEY_ALIAS')
+                keyPassword project.property('YTM_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig hasReleaseKey ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    applicationVariants.all { variant ->
+        variant.outputs.all {
+            outputFileName = "YouTube-Music-Android-${appVersion}.apk"
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.12.1'
+    implementation 'androidx.core:core:1.13.1'
+}

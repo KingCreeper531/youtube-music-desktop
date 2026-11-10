@@ -1,7 +1,7 @@
 {
   "name": "tunebox",
   "productName": "YouTube Music",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Ad-free YouTube Music desktop app with SponsorBlock and Discord Rich Presence",
   "main": "src/main.js",
   "author": "Personal build",
@@ -42,7 +42,10 @@
       }
     ],
     "win": {
-      "target": ["nsis", "portable"],
+      "target": [
+        "nsis",
+        "portable"
+      ],
       "icon": "build/icon.ico"
     },
     "portable": {

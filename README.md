@@ -18,7 +18,13 @@ Get the latest release from the [Releases page](https://github.com/KingCreeper53
 - `YouTube-Music-Setup-x.y.z.exe`: installer (recommended). It updates itself.
 - `YouTube-Music-Portable-x.y.z.exe`: runs without installing.
 
+- `YouTube-Music-Android-x.y.z.apk`: Android app (Android 8 or newer).
+
 Windows SmartScreen may warn about the app because it isn't code-signed. Click **More info**, then **Run anyway**.
+
+### Android
+
+Download the APK on your phone and open it. Android asks once to allow installs from your browser or file manager. The Android app has ad blocking, SponsorBlock, background play with lock-screen controls, and the same green **Update** button. Google usually blocks sign-in inside apps like this, so expect to listen signed out. Discord status isn't available on Android.
 
 ## Discord setup
 
