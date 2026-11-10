@@ -17,7 +17,42 @@ const YTM_URL = 'https://music.youtube.com/';
 const PARTITION = 'persist:ytmusic';
 const ICON = path.join(__dirname, '..', 'build', 'icon.png');
 
-app.setAppUserModelId('local.tunebox.ytmusic');
+const APP_ID = 'local.tunebox.ytmusic';
+app.setAppUserModelId(APP_ID);
+
+// Keep the Start Menu shortcut (what Windows search finds) in place; it can go
+// missing after updates or cleanups. The desktop shortcut is only added once,
+// so if you delete it, it stays deleted.
+function ensureShortcuts() {
+  if (process.platform !== 'win32' || !app.isPackaged || process.env.PORTABLE_EXECUTABLE_DIR) return;
+  const opts = {
+    target: process.execPath,
+    cwd: path.dirname(process.execPath),
+    description: 'YouTube Music',
+    icon: process.execPath,
+    iconIndex: 0,
+    appUserModelId: APP_ID,
+  };
+  const fix = (lnk) => {
+    let current = null;
+    try { current = shell.readShortcutLink(lnk); } catch { /* missing */ }
+    const ok = current
+      && path.resolve(current.target).toLowerCase() === path.resolve(process.execPath).toLowerCase()
+      && current.appUserModelId === APP_ID;
+    if (!ok) {
+      try {
+        fs.mkdirSync(path.dirname(lnk), { recursive: true });
+        shell.writeShortcutLink(lnk, current ? 'replace' : 'create', opts);
+        log(`${current ? 'Repaired' : 'Created'} shortcut: ${lnk}`);
+      } catch (e) { log(`Shortcut failed (${lnk}): ${e.message}`); }
+    }
+  };
+  fix(path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'YouTube Music.lnk'));
+  if (!config.get('desktopShortcutDone')) {
+    fix(path.join(app.getPath('desktop'), 'YouTube Music.lnk'));
+    config.set({ desktopShortcutDone: true });
+  }
+}
 app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
 
 // Developer test hook: run a separate copy alongside the installed app
@@ -851,6 +886,7 @@ app.whenReady().then(async () => {
 
   discord.setClientId(config.get('discordClientId'));
   discord.setEnabled(config.get('discord'));
+  ensureShortcuts();
   spotify.setClientId(config.get('spotifyClientId'));
   playlists.init({
     log,

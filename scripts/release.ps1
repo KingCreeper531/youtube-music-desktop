@@ -35,6 +35,18 @@ if (Test-Path dist) { Remove-Item -Recurse -Force dist }
 Run npx @('electron-builder', '--win', '--publish', 'never')
 
 # Android APK (same version number, read from package.json by Gradle)
+# If the usual Gradle folder (~\.gradle) can't be written to, build with a
+# Gradle folder inside the project and pass the signing settings along.
+$gradleHome = Join-Path $env:USERPROFILE '.gradle'
+$canWrite = $true
+try { $probe = Join-Path $gradleHome '.ytm-write-test'; [IO.File]::WriteAllText($probe, 'x'); Remove-Item $probe -Force } catch { $canWrite = $false }
+if (-not $canWrite) {
+  Write-Host "~\.gradle isn't writable here; using android\.gradle-home instead" -ForegroundColor Yellow
+  $env:GRADLE_USER_HOME = Join-Path (Get-Location) 'android\.gradle-home'
+  Get-Content (Join-Path $gradleHome 'gradle.properties') -ErrorAction SilentlyContinue |
+    Where-Object { $_ -match '^(YTM_[A-Z_]+)=(.*)$' } |
+    ForEach-Object { Set-Item -Path "env:ORG_GRADLE_PROJECT_$($Matches[1])" -Value $Matches[2] }
+}
 Push-Location android
 try { Run '.\gradlew.bat' @('assembleRelease', '--no-daemon', '-q') } finally { Pop-Location }
 Copy-Item "android\app\build\outputs\apk\release\YouTube-Music-Android-$version.apk" "dist\" -Force
