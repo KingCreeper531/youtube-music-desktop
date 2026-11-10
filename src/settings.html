@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<title>YouTube Music Settings</title>
+<style>
+  :root {
+    --bg: #121212; --panel: #1c1c1c; --line: #2a2a2a; --text: #f1f1f1; --muted: #a0a0a0;
+    --accent: #ff2d55; --ok: #3ddc84; --warn: #ffb020;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 "Segoe UI", system-ui, sans-serif; }
+  main { padding: 20px 22px 28px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 18px; font-size: 13px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 4px 16px; margin-bottom: 14px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 12px 0 2px; }
+  label.row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 0; border-top: 1px solid var(--line); cursor: pointer; }
+  label.row:first-of-type { border-top: 0; }
+  .row small { display: block; color: var(--muted); font-size: 12px; }
+  input[type=checkbox] { appearance: none; width: 38px; height: 22px; border-radius: 11px; background: #444; position: relative; flex: none; cursor: pointer; transition: background .15s; }
+  input[type=checkbox]::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: left .15s; }
+  input[type=checkbox]:checked { background: var(--accent); }
+  input[type=checkbox]:checked::after { left: 19px; }
+  .field { padding: 11px 0; border-top: 1px solid var(--line); }
+  .field input[type=text] { width: 100%; margin-top: 6px; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--line); background: #0d0d0d; color: var(--text); font: inherit; }
+  .status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #666; }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); }
+  ol { margin: 6px 0 10px; padding-left: 20px; color: var(--muted); font-size: 13px; }
+  a { color: #8ab4ff; cursor: pointer; }
+  button { background: #2a2a2a; color: var(--text); border: 1px solid #3a3a3a; padding: 7px 12px; border-radius: 6px; font: inherit; cursor: pointer; }
+  button:hover { background: #333; }
+  button.green { background: #1ed760; border-color: #1ed760; color: #04210f; font-weight: 600; }
+  button.green:hover { background: #1bc456; }
+  button:disabled { opacity: .7; cursor: default; }
+  .foot { color: var(--muted); font-size: 12px; text-align: center; margin-top: 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>YouTube Music</h1>
+  <p class="sub">Changes apply immediately.</p>
+
+  <section>
+    <h2>Ad blocking</h2>
+    <label class="row"><span>Block ads<small>Strips ads from player data and skips any that slip through</small></span><input type="checkbox" data-key="adblock"></label>
+    <label class="row"><span>Block ad &amp; tracker requests<small>EasyList + EasyPrivacy filter lists</small></span><input type="checkbox" data-key="networkBlocking"></label>
+    <label class="row"><span>Hide Premium upsells<small>Banners and popups asking you to subscribe</small></span><input type="checkbox" data-key="hideUpsells"></label>
+  </section>
+
+  <section>
+    <h2>Playback</h2>
+    <label class="row"><span>SponsorBlock<small>Skip non-music intros/outros in music videos</small></span><input type="checkbox" data-key="sponsorBlock"></label>
+    <label class="row"><span>Never ask "Are you still there?"<small>Keeps playing in the background and when minimized</small></span><input type="checkbox" data-key="noAfkPause"></label>
+    <label class="row"><span>Close to tray<small>The X button hides the window; music keeps playing</small></span><input type="checkbox" data-key="closeToTray"></label>
+  </section>
+
+  <section>
+    <h2>Discord Rich Presence</h2>
+    <label class="row"><span>Show what I'm listening to<small><span class="status"><span class="dot" id="dot"></span><span id="dstatus">…</span></span></small></span><input type="checkbox" data-key="discord"></label>
+    <div class="field">
+      <div>Discord Application ID</div>
+      <ol>
+        <li>Open the <a id="devportal">Discord Developer Portal</a> and click <b>New Application</b>.</li>
+        <li>Name it what you want people to see (e.g. <b>YouTube Music</b>) — it shows as “Listening to …”.</li>
+        <li>Copy the <b>Application ID</b> and paste it here.</li>
+      </ol>
+      <input type="text" id="clientId" placeholder="e.g. 1234567890123456789" spellcheck="false">
+    </div>
+    <label class="row"><span>Hide when paused<small>Off: your status shows the song with “(Paused)”</small></span><input type="checkbox" data-key="discordHidePaused"></label>
+    <label class="row"><span>“Listen on YouTube Music” button<small>Others can click it to open the song</small></span><input type="checkbox" data-key="discordShowButton"></label>
+  </section>
+
+  <section>
+    <h2>Updates</h2>
+    <div class="field" style="border-top:0; display:flex; align-items:center; justify-content:space-between; gap:12px">
+      <span><span id="upver">Version …</span><small id="upstatus" style="display:block;color:var(--muted);font-size:12px"></small></span>
+      <span style="display:flex; gap:8px">
+        <button id="upcheck">Check for updates</button>
+        <button id="upinstall" class="green" hidden>Update</button>
+      </span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Account</h2>
+    <div class="field" style="border-top:0">
+      <div>Sign in with Firefox</div>
+      <ol>
+        <li>Make sure you're signed in at music.youtube.com in Firefox.</li>
+        <li>Click below. Your Firefox sign-in is copied into YouTube Music, and nothing leaves this PC.</li>
+      </ol>
+      <button id="ffsignin">Sign in with Firefox</button>
+      <span id="ffresult" class="status" style="margin-left:8px"></span>
+    </div>
+    <div class="field">
+      <button id="clear">Sign out &amp; clear app data</button>
+    </div>
+  </section>
+  <p class="foot" id="ver"></p>
+</main>
+<script>
+  const STATUS = {
+    'connected': ['Connected to Discord', 'ok'],
+    'off': ['Off', ''],
+    'connecting': ['Connecting…', 'warn'],
+    'no-client-id': ['Paste an Application ID below', 'warn'],
+    'bad-client-id': ['Discord rejected that Application ID', 'warn'],
+    'discord-not-running': ['Waiting for Discord to open…', 'warn'],
+    'closed': ['Reconnecting…', 'warn'],
+  };
+  function render({ config, discordStatus, version }) {
+    document.querySelectorAll('input[data-key]').forEach((el) => { el.checked = !!config[el.dataset.key]; });
+    const ci = document.getElementById('clientId');
+    if (document.activeElement !== ci) ci.value = config.discordClientId || '';
+    const [text, cls] = STATUS[discordStatus] || [discordStatus, ''];
+    document.getElementById('dstatus').textContent = text;
+    document.getElementById('dot').className = 'dot ' + cls;
+    if (version) document.getElementById('ver').textContent = 'YouTube Music ' + version;
+  }
+  async function refresh() { render(await tunebox.get()); }
+  document.querySelectorAll('input[data-key]').forEach((el) => {
+    el.addEventListener('change', async () => {
+      await tunebox.set({ [el.dataset.key]: el.checked });
+      setTimeout(refresh, 600);
+    });
+  });
+  let t;
+  document.getElementById('clientId').addEventListener('input', (e) => {
+    clearTimeout(t);
+    const v = e.target.value.replace(/\D/g, '');
+    t = setTimeout(async () => { await tunebox.set({ discordClientId: v }); setTimeout(refresh, 1500); }, 500);
+  });
+  document.getElementById('devportal').addEventListener('click', () => tunebox.openExternal('https://discord.com/developers/applications'));
+  function renderUpdate(s) {
+    if (!s) return;
+    document.getElementById('upver').textContent = 'Version ' + s.current;
+    const text = {
+      dev: 'Updates are checked in the installed app only',
+      idle: '', checking: 'Checking…', latest: 'You\'re up to date',
+      available: 'Version ' + s.version + ' is available',
+      downloading: 'Downloading… ' + (s.percent || 0) + '%',
+      ready: 'Version ' + s.version + ' is ready to install',
+      error: 'Couldn\'t update: ' + (s.error || 'unknown error'),
+    }[s.status] || '';
+    document.getElementById('upstatus').textContent = text;
+    const btn = document.getElementById('upinstall');
+    const show = ['available', 'downloading', 'ready'].includes(s.status) || (s.status === 'error' && s.version);
+    btn.hidden = !show;
+    btn.disabled = s.status === 'downloading';
+    btn.textContent = s.status === 'downloading' ? 'Updating… ' + (s.percent || 0) + '%'
+      : s.status === 'ready' ? 'Restart to update'
+      : s.status === 'error' ? 'Retry update' : 'Update to ' + s.version;
+    document.getElementById('upcheck').disabled = ['checking', 'downloading'].includes(s.status);
+  }
+  tunebox.onUpdate(renderUpdate);
+  tunebox.updateGet().then(renderUpdate);
+  document.getElementById('upcheck').addEventListener('click', async () => renderUpdate(await tunebox.updateCheck()));
+  document.getElementById('upinstall').addEventListener('click', () => tunebox.updateInstall());
+
+  document.getElementById('ffsignin').addEventListener('click', async () => {
+    const out = document.getElementById('ffresult');
+    out.textContent = 'Signing in…';
+    const res = await tunebox.firefoxSignIn();
+    out.textContent = res && res.ok ? 'Signed in ✓' : '';
+  });
+  document.getElementById('clear').addEventListener('click', async () => {
+    if (confirm('Sign out of YouTube Music and clear all app data?')) await tunebox.clearData();
+  });
+  refresh();
+  setInterval(refresh, 3000);
+</script>
+</body>
+</html>
