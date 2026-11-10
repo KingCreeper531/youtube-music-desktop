@@ -10,7 +10,9 @@ param(
   [ValidateSet('patch', 'minor', 'major')] [string]$Bump = 'patch',
   [string]$Notes = ''
 )
-$ErrorActionPreference = 'Stop'
+# Native tools write progress to stderr; Windows PowerShell 5.1 would treat that
+# as fatal under 'Stop'. Failures are caught by exit codes in Run() instead.
+$ErrorActionPreference = 'Continue'
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
 function Run($exe, [string[]]$argv) {
