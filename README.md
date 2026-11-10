@@ -30,6 +30,16 @@ Windows SmartScreen may warn about the app because it isn't code-signed. Click *
 
 Download the APK on your phone and open it. Android asks once to allow installs from your browser or file manager. The Android app has ad blocking, SponsorBlock, background play with lock-screen controls, **My Music** (tap the music-note button in the top bar to add songs from your phone), and the same green **Update** button. Google usually blocks sign-in inside apps like this, so expect to listen signed out. Discord status isn't available on Android.
 
+### iPhone / iPad
+
+Each release also gets `YouTube-Music-iOS-x.y.z.ipa` (added a few minutes after the release is published). It's unsigned, so you install it from a computer with your own Apple ID:
+
+1. Install [AltStore](https://altstore.io) or [Sideloadly](https://sideloadly.io) on your Windows PC or Mac and plug in your iPhone.
+2. Open the `.ipa` with it and sign in with your Apple ID (a free one works).
+3. On the iPhone, turn on **Settings → Privacy & Security → Developer Mode**, and trust your Apple ID under **Settings → General → VPN & Device Management**.
+
+With a free Apple ID the app has to be re-signed every 7 days (AltStore can do it automatically over Wi-Fi); a paid developer account lasts a year. The iOS app has ad blocking, SponsorBlock and lock-screen controls. Its Update button opens the download page, since iOS apps can't update themselves. Background play may pause when you leave the app.
+
 ## Discord setup
 
 1. Open the [Discord Developer Portal](https://discord.com/developers/applications) and create a new application. The name you give it is what shows after "Listening to".

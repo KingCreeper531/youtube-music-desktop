@@ -72,6 +72,7 @@ if (-not $Notes) {
 - **YouTube-Music-Setup-$version.exe**: installer (recommended). Updates itself with the green Update button.
 - **YouTube-Music-Portable-$version.exe**: runs without installing.
 - **YouTube-Music-Android-$version.apk**: Android app. Open it on your phone to install, then use its green Update button for future versions.
+- **YouTube-Music-iOS-$version.ipa**: iPhone/iPad app (appears a few minutes after this release). Install it with AltStore or Sideloadly; see the README.
 
 Windows may show a SmartScreen warning because the app isn't code-signed. Click **More info**, then **Run anyway**.
 "@

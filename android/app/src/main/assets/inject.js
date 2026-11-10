@@ -255,7 +255,7 @@
   var LIB_ID = 'tb-library-button';
   function renderLibraryButton() {
     var host = document.querySelector('ytmusic-nav-bar #right-content');
-    if (!host || !native) return;
+    if (!host || !native || typeof native.openLibrary !== 'function') return; // no My Music on iOS yet
     var btn = document.getElementById(LIB_ID);
     if (!btn) {
       btn = document.createElement('button');

@@ -1,0 +1,52 @@
+# Xcode project definition. GitHub's Mac build turns this into an Xcode
+# project with XcodeGen (see .github/workflows/ios.yml).
+name: YouTubeMusic
+options:
+  bundleIdPrefix: io.github.kingcreeper531
+  deploymentTarget:
+    iOS: "15.0"
+targets:
+  YouTubeMusic:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: Resources
+      # The same page script the Android app uses
+      - path: ../android/app/src/main/assets/inject.js
+        buildPhase: resources
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: YouTube Music
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSRequiresIPhoneOS: true
+        UIBackgroundModes: [audio]
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        UIStatusBarStyle: UIStatusBarStyleLightContent
+        UIViewControllerBasedStatusBarAppearance: true
+        UIRequiresFullScreen: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.kingcreeper531.ytmusic
+        PRODUCT_NAME: YouTubeMusic
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_VERSION: "5.0"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_IDENTITY: ""
