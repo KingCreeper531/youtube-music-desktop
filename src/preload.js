@@ -142,13 +142,63 @@ function pageScript(initialCfg) {
     const action = e.detail;
     try {
       if (action === 'playpause') (p.getPlayerState() === 1 ? p.pauseVideo() : p.playVideo());
+      else if (action === 'pause') p.pauseVideo();
       else if (action === 'next') p.nextVideo();
       else if (action === 'previous') p.previousVideo();
+      else if (action === 'restart') p.seekTo(0, true);
     } catch { /* ignore */ }
   });
   document.addEventListener('tb:config', (e) => {
     try { cfg = JSON.parse(e.detail); } catch { /* ignore */ }
   });
+
+  // ---------------------------------------- imported playlist queue support
+  // Tell the app when a song finishes so it can load the next one in the playlist.
+  document.addEventListener('ended', (e) => {
+    const p = player();
+    if (e.target && e.target.tagName === 'VIDEO' && p && !p.classList.contains('ad-showing')) {
+      try { emit('tb:ended', p.getVideoData().video_id); } catch { /* ignore */ }
+    }
+  }, true);
+
+  // YouTube Music can jump to its own next song before 'ended' arrives, so also
+  // report "the previous song had reached its end and a different one started".
+  // (YouTube Music resets time/duration to 0 just before switching, so remember
+  // "reached the end" per song instead of comparing the last reading.)
+  let lastId = null;
+  let reachedEnd = false;
+  setInterval(() => {
+    const p = player();
+    if (!p || typeof p.getVideoData !== 'function' || p.classList.contains('ad-showing')) return;
+    let id;
+    try { id = p.getVideoData().video_id; } catch { return; }
+    if (!id) return;
+    if (id !== lastId) {
+      if (lastId && reachedEnd) emit('tb:ended', lastId);
+      lastId = id;
+      reachedEnd = false;
+    }
+    const t = p.getCurrentTime ? p.getCurrentTime() : 0;
+    const dur = p.getDuration ? p.getDuration() : 0;
+    if (dur > 0 && t >= dur - 3) reachedEnd = true;
+  }, 250);
+
+  // While a playlist plays, media keys (next / previous) step through it.
+  let queueActive = false;
+  document.addEventListener('tb:queue', (e) => { queueActive = e.detail === 'true'; });
+  if (window.MediaSession && MediaSession.prototype.setActionHandler) {
+    patch(MediaSession.prototype, 'setActionHandler', (orig) => function setActionHandler(action, handler) {
+      if ((action === 'nexttrack' || action === 'previoustrack') && typeof handler === 'function') {
+        const dir = action === 'nexttrack' ? 1 : -1;
+        const original = handler;
+        handler = function (...args) {
+          if (queueActive) emit('tb:queue-step', dir);
+          else return original.apply(this, args);
+        };
+      }
+      return orig.call(this, action, handler);
+    });
+  }
 }
 
 contextBridge.executeInMainWorld({
@@ -246,6 +296,30 @@ document.addEventListener('tb:state', (e) => {
     ipcRenderer.send('tb:now-playing', state);
   }
 });
+// --------------------------------------------- imported playlist queue (isolated side)
+let queueActive = false;
+document.addEventListener('tb:ended', (e) => {
+  try { ipcRenderer.send('tb:ended', JSON.parse(e.detail)); } catch { /* ignore */ }
+});
+document.addEventListener('tb:queue-step', (e) => {
+  try { ipcRenderer.send('tb:queue-step', JSON.parse(e.detail)); } catch { /* ignore */ }
+});
+function setQueueActive(on) {
+  queueActive = !!on;
+  document.dispatchEvent(new CustomEvent('tb:queue', { detail: String(queueActive) }));
+}
+ipcRenderer.on('tb:queue', (_e, on) => setQueueActive(on));
+ipcRenderer.invoke('tb:queue-get').then(setQueueActive).catch(() => {});
+// The player bar's own next / previous buttons step through the playlist too.
+document.addEventListener('click', (e) => {
+  if (!queueActive) return;
+  const b = e.target.closest && e.target.closest('ytmusic-player-bar .next-button, ytmusic-player-bar .previous-button');
+  if (!b) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  ipcRenderer.send('tb:queue-step', b.classList.contains('next-button') ? 1 : -1);
+}, true);
+
 document.addEventListener('tb:ad', (e) => {
   try { ipcRenderer.send('tb:ad-skipped', JSON.parse(e.detail)); } catch { /* ignore */ }
 });
@@ -327,8 +401,70 @@ function renderUpdateButton() {
 
 ipcRenderer.on('tb:update', (_e, s) => { updateState = s; renderUpdateButton(); });
 ipcRenderer.invoke('tb:update-get').then((s) => { updateState = s; renderUpdateButton(); }).catch(() => {});
-// YouTube Music re-renders its top bar while you browse; keep the button in place.
-setInterval(renderUpdateButton, 2000);
+// ---------------------------------------------------------- My Music button
+const LIB_BTN_ID = 'tb-library-button';
+function renderLibraryButton() {
+  const host = document.querySelector('ytmusic-nav-bar #right-content');
+  if (!host) return;
+  let btn = document.getElementById(LIB_BTN_ID);
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.id = LIB_BTN_ID;
+    btn.type = 'button';
+    btn.title = 'Your own music files (Ctrl+L)';
+    btn.style.cssText = [
+      'display:inline-flex', 'align-items:center', 'gap:6px', 'height:36px', 'padding:0 14px',
+      'margin:0 12px 0 0', 'border:1px solid rgba(255,255,255,.2)', 'border-radius:18px',
+      'background:transparent', 'color:#fff', 'font:500 14px/1 Roboto,"Segoe UI",sans-serif',
+      'cursor:pointer', 'white-space:nowrap', 'transition:background .15s',
+    ].join(';');
+    btn.addEventListener('mouseenter', () => { btn.style.background = 'rgba(255,255,255,.1)'; });
+    btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; });
+    btn.addEventListener('click', () => ipcRenderer.send('tb:open-library'));
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('width', '18');
+    svg.setAttribute('height', '18');
+    svg.setAttribute('fill', 'currentColor');
+    const p = document.createElementNS(NS, 'path');
+    p.setAttribute('d', 'M12 3v10.6A4 4 0 1 0 14 17V7h4V3h-6Z');
+    svg.appendChild(p);
+    const span = document.createElement('span');
+    span.textContent = 'My Music';
+    btn.append(svg, span);
+  }
+  // Keep it just right of the Update button (or first in the bar when there's no update)
+  const upd = document.getElementById(UPDATE_BTN_ID);
+  const ref = upd && upd.parentElement === host ? upd.nextSibling : host.firstChild;
+  if (btn.parentElement !== host || (upd && upd.parentElement === host && btn.previousSibling !== upd)) {
+    host.insertBefore(btn, ref);
+  }
+}
+
+// YouTube Music re-renders its top bar while you browse; keep the buttons in place.
+// ---------------------------------------------------------- Playlists button
+const PL_BTN_ID = 'tb-playlists-button';
+function renderPlaylistsButton() {
+  const host = document.querySelector('ytmusic-nav-bar #right-content');
+  const lib = document.getElementById(LIB_BTN_ID);
+  if (!host || !lib || lib.parentElement !== host) return;
+  let btn = document.getElementById(PL_BTN_ID);
+  if (!btn) {
+    btn = lib.cloneNode(true);
+    btn.id = PL_BTN_ID;
+    btn.title = 'Playlists imported from Spotify (Ctrl+I)';
+    btn.querySelector('span').textContent = 'Playlists';
+    btn.querySelector('path').setAttribute('d', 'M3 5h12v2H3V5Zm0 4h12v2H3V9Zm0 4h8v2H3v-2Zm14-4v6.6A3 3 0 1 0 19 18v-7h3V9h-5Z');
+    btn.addEventListener('mouseenter', () => { btn.style.background = 'rgba(255,255,255,.1)'; });
+    btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; });
+    btn.addEventListener('click', () => ipcRenderer.send('tb:open-playlists'));
+  }
+  if (btn.previousSibling !== lib) host.insertBefore(btn, lib.nextSibling);
+}
+
+setInterval(() => { renderUpdateButton(); renderLibraryButton(); renderPlaylistsButton(); }, 2000);
+document.addEventListener('DOMContentLoaded', () => setTimeout(renderLibraryButton, 1500));
 
 ipcRenderer.on('tb:control', (_e, action) => {
   document.dispatchEvent(new CustomEvent('tb:control', { detail: action }));

@@ -16,6 +16,8 @@ const DEFAULTS = {
   discordClientId: '',
   discordHidePaused: false, // false = keep showing the song with "(Paused)"
   discordShowButton: true,
+  // Spotify import
+  spotifyClientId: '',
   // Window
   closeToTray: true,
   bounds: { width: 1280, height: 800 },

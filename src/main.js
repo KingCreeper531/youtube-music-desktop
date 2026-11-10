@@ -6,6 +6,11 @@ const fs = require('fs');
 const config = require('./config');
 const { DiscordPresence } = require('./discord');
 const updater = require('./updater');
+const library = require('./library');
+const spotify = require('./spotify');
+const playlists = require('./playlists');
+
+library.registerScheme(); // must happen before the app is ready
 
 const YTM_URL = 'https://music.youtube.com/';
 const PARTITION = 'persist:ytmusic';
@@ -277,6 +282,8 @@ function createWindow() {
     if (input.key === 'F5' || (input.control && input.key.toLowerCase() === 'r')) win.webContents.reload();
     if (input.key === 'F12') win.webContents.toggleDevTools();
     if (input.control && input.key === ',') openSettings();
+    if (input.control && input.key.toLowerCase() === 'l') openLibrary();
+    if (input.control && input.key.toLowerCase() === 'i') openPlaylists();
     if (input.alt && input.key === 'ArrowLeft' && win.webContents.navigationHistory.canGoBack()) win.webContents.navigationHistory.goBack();
     if (input.alt && input.key === 'ArrowRight' && win.webContents.navigationHistory.canGoForward()) win.webContents.navigationHistory.goForward();
   });
@@ -318,7 +325,146 @@ function openSettings() {
 
 // ---------------------------------------------------------------- tray
 function sendControl(action) {
-  win?.webContents.send('tb:control', action);
+  if (activeSource === 'local' && libraryWin) libraryWin.webContents.send('lib:control', action);
+  else if (queue && (action === 'next' || action === 'previous')) queueStep(action === 'next' ? 1 : -1);
+  else win?.webContents.send('tb:control', action);
+}
+
+// ---------------------------------------------------------------- imported playlist queue
+// Plays an imported playlist's matched songs in order inside YouTube Music.
+let queue = null; // { playlistId, name, ids, index, advancing }
+
+function setQueueFlag() {
+  win?.webContents.send('tb:queue', !!queue);
+  playlistsWin?.webContents.send('pl:queue', queue && { playlistId: queue.playlistId, videoId: queue.ids[queue.index] });
+}
+
+function playPlaylist({ id, videoId, shuffle }) {
+  let ids = playlists.videoIds(id);
+  if (!ids.length) return false;
+  if (shuffle) {
+    for (let i = ids.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [ids[i], ids[j]] = [ids[j], ids[i]]; }
+  }
+  let index = videoId ? Math.max(0, ids.indexOf(videoId)) : 0;
+  if (shuffle && videoId) { ids = [ids[index], ...ids.filter((_, i) => i !== index)]; index = 0; }
+  queue = { playlistId: id, name: playlists.get(id)?.name, ids, index, advancing: true };
+  if (localNp && !localNp.paused) libraryWin?.webContents.send('lib:control', 'pause');
+  activeSource = 'ytm';
+  showWindow();
+  queueLoad();
+  log(`Playing imported playlist "${queue.name}" (${ids.length} songs)`);
+  return true;
+}
+
+function queueLoad() {
+  queue.advancing = true; // ignore stray songs until the requested one is playing
+  win?.loadURL(`https://music.youtube.com/watch?v=${queue.ids[queue.index]}`);
+  setQueueFlag();
+}
+
+function queueStep(dir) {
+  if (!queue) return;
+  if (dir < 0 && ytmNp && ytmNp.currentTime > 3) { // like a normal player: restart the song first
+    win?.webContents.send('tb:control', 'restart');
+    return;
+  }
+  const next = queue.index + dir;
+  if (next >= queue.ids.length) { // finished: let YouTube Music carry on with its own radio
+    log('Imported playlist finished');
+    queue = null;
+    setQueueFlag();
+    return;
+  }
+  queue.index = Math.max(0, next);
+  queueLoad();
+}
+
+function queueOnState(np) {
+  if (!queue || !np?.videoId) return;
+  const at = queue.ids.indexOf(np.videoId);
+  if (np.videoId === queue.ids[queue.index]) { queue.advancing = false; return; }
+  if (queue.advancing || queue.exitTimer) return;
+  if (at >= 0) { queue.index = at; setQueueFlag(); return; } // moved within the playlist
+  // A song outside the playlist started. If that's YouTube Music's autoplay after
+  // our song ended, the "ended" signal arrives within a moment; otherwise you
+  // picked something else, so stop following the playlist.
+  const q = queue;
+  q.exitTimer = setTimeout(() => {
+    if (queue === q) { queue = null; setQueueFlag(); log('Left imported playlist'); }
+  }, 2000);
+}
+
+function queueOnEnded(videoId) {
+  if (!queue || videoId !== queue.ids[queue.index]) return;
+  clearTimeout(queue.exitTimer);
+  queue.exitTimer = null;
+  queueStep(1);
+}
+
+// ---------------------------------------------------------------- Playlists window
+let playlistsWin = null;
+function openPlaylists() {
+  if (playlistsWin) { playlistsWin.show(); playlistsWin.focus(); return; }
+  playlistsWin = new BrowserWindow({
+    width: 1040,
+    height: 700,
+    minWidth: 640,
+    minHeight: 420,
+    title: 'Playlists',
+    icon: ICON,
+    backgroundColor: '#030303',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'playlists-preload.js'),
+      contextIsolation: true,
+      sandbox: true,
+    },
+  });
+  playlistsWin.setMenuBarVisibility(false);
+  playlistsWin.loadFile(path.join(__dirname, 'playlists.html'));
+  playlistsWin.webContents.on('will-navigate', (e) => e.preventDefault());
+  playlistsWin.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https:\/\/(developer\.spotify\.com|exportify\.app|www\.spotify\.com|support\.spotify\.com)\//.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  playlistsWin.on('closed', () => { playlistsWin = null; });
+}
+
+// ---------------------------------------------------------------- My Music
+let libraryWin = null;
+function openLibrary() {
+  if (libraryWin) { libraryWin.show(); libraryWin.focus(); return; }
+  libraryWin = new BrowserWindow({
+    width: 1000,
+    height: 680,
+    minWidth: 560,
+    minHeight: 400,
+    title: 'My Music',
+    icon: ICON,
+    backgroundColor: '#030303',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'library-preload.js'),
+      contextIsolation: true,
+      sandbox: true,
+      backgroundThrottling: false,
+    },
+  });
+  libraryWin.setMenuBarVisibility(false);
+  libraryWin.loadFile(path.join(__dirname, 'library.html'));
+  // Closing while a song plays just hides the window so the music keeps going.
+  libraryWin.on('close', (e) => {
+    if (!quitting && localNp && !localNp.paused) {
+      e.preventDefault();
+      libraryWin.hide();
+    }
+  });
+  libraryWin.on('closed', () => {
+    libraryWin = null;
+    onLocalState(null);
+  });
+  // Files dropped outside the drop zone must not navigate the window away
+  libraryWin.webContents.on('will-navigate', (e) => e.preventDefault());
 }
 
 function updateTray() {
@@ -339,6 +485,8 @@ function updateTray() {
     { label: 'Previous', click: () => sendControl('previous'), enabled: !!np },
     { type: 'separator' },
     { label: 'Show YouTube Music', click: showWindow },
+    { label: 'My Music', click: openLibrary },
+    { label: 'Playlists (Spotify import)', click: openPlaylists },
     { label: 'Sign in with Firefox', click: () => signInWithFirefox() },
     { label: 'Settings…', click: openSettings },
     { type: 'separator' },
@@ -395,6 +543,36 @@ function buildActivity(np) {
   return activity;
 }
 
+// Two sources can play: YouTube Music (the main window) and My Music (local files).
+// Whichever started playing most recently is "active"; starting one pauses the other.
+let ytmNp = null;
+let localNp = null;
+let activeSource = 'ytm';
+
+function onYtmState(np) {
+  ytmNp = np;
+  queueOnState(np);
+  if (np && !np.paused) {
+    if (localNp && !localNp.paused) libraryWin?.webContents.send('lib:control', 'pause');
+    activeSource = 'ytm';
+  }
+  if (activeSource === 'ytm') onNowPlaying(np);
+}
+
+function onLocalState(np) {
+  localNp = np;
+  if (np && !np.paused) {
+    if (ytmNp && !ytmNp.paused) win?.webContents.send('tb:control', 'pause');
+    activeSource = 'local';
+  }
+  if (!np && activeSource === 'local') {
+    activeSource = 'ytm';
+    onNowPlaying(ytmNp);
+    return;
+  }
+  if (activeSource === 'local') onNowPlaying(np);
+}
+
 let lastStartSent = 0;
 function onNowPlaying(np) {
   const prev = nowPlaying;
@@ -406,7 +584,7 @@ function onNowPlaying(np) {
   if (trackChanged || pauseChanged) {
     log(np?.title ? `Now playing: "${np.title}" by ${np.artist} [${np.paused ? 'paused' : 'playing'}] ${Math.round(np.duration)}s` : 'Nothing playing');
     updateTray();
-    if (win) win.setTitle(np?.title ? `${np.title} — ${np.artist || ''} · YouTube Music` : 'YouTube Music');
+    if (win && activeSource === 'ytm') win.setTitle(np?.title ? `${np.title} — ${np.artist || ''} · YouTube Music` : 'YouTube Music');
   }
 
   const activity = buildActivity(np);
@@ -441,7 +619,71 @@ async function getSegments(videoId) {
 
 // ---------------------------------------------------------------- IPC
 ipcMain.on('tb:get-config', (e) => { e.returnValue = config.load(); });
-ipcMain.on('tb:now-playing', (_e, np) => onNowPlaying(np));
+ipcMain.on('tb:now-playing', (_e, np) => onYtmState(np));
+ipcMain.on('tb:open-library', () => openLibrary());
+ipcMain.on('tb:open-playlists', () => openPlaylists());
+ipcMain.on('tb:ended', (_e, videoId) => queueOnEnded(videoId));
+ipcMain.on('tb:queue-step', (_e, dir) => queueStep(dir > 0 ? 1 : -1));
+ipcMain.handle('tb:queue-get', () => !!queue);
+
+// Imported playlists
+ipcMain.handle('pl:list', () => playlists.list());
+ipcMain.handle('pl:get', (_e, id) => playlists.get(String(id)));
+ipcMain.handle('pl:remove', (_e, id) => { if (queue?.playlistId === id) { queue = null; setQueueFlag(); } playlists.remove(String(id)); });
+ipcMain.handle('pl:rename', (_e, id, name) => playlists.rename(String(id), String(name)));
+ipcMain.handle('pl:retry', (_e, id) => playlists.retry(String(id)));
+ipcMain.handle('pl:play', (_e, opts) => playPlaylist({ id: String(opts?.id), videoId: opts?.videoId, shuffle: !!opts?.shuffle }));
+ipcMain.handle('pl:queue', () => queue && { playlistId: queue.playlistId, videoId: queue.ids[queue.index] });
+ipcMain.handle('pl:import-file', async () => {
+  const res = await dialog.showOpenDialog(playlistsWin || win, {
+    title: 'Import a playlist file',
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'Playlist exports', extensions: ['csv', 'json'] }],
+  });
+  if (res.canceled) return { imported: 0 };
+  let imported = 0;
+  const errors = [];
+  for (const f of res.filePaths) {
+    try {
+      for (const p of spotify.readExportFile(f)) { playlists.add(p.name, 'file', p.tracks); imported++; }
+    } catch (e) { errors.push(`${path.basename(f)}: ${e.message}`); }
+  }
+  return { imported, errors };
+});
+
+// Spotify account
+ipcMain.handle('sp:status', () => ({ clientId: config.get('spotifyClientId'), connected: spotify.isConnected(), redirectUri: spotify.REDIRECT_URI }));
+ipcMain.handle('sp:set-client-id', (_e, id) => {
+  const v = String(id || '').trim();
+  if (v !== config.get('spotifyClientId')) { config.set({ spotifyClientId: v }); spotify.setClientId(v); spotify.signOut(); }
+});
+ipcMain.handle('sp:connect', async () => {
+  try { await spotify.connect(); playlistsWin?.focus(); return { ok: true }; } catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle('sp:disconnect', () => spotify.signOut());
+ipcMain.handle('sp:playlists', async () => {
+  try { return { ok: true, playlists: await spotify.listPlaylists() }; } catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle('sp:import', async (_e, items) => {
+  let imported = 0;
+  const errors = [];
+  for (const it of Array.isArray(items) ? items : []) {
+    try {
+      const tracks = await spotify.playlistTracks(String(it.id));
+      if (tracks.length) { playlists.add(it.name, 'spotify', tracks, it.image || ''); imported++; }
+      else errors.push(`${it.name}: no songs`);
+    } catch (e) { errors.push(`${it.name}: ${e.message}`); }
+  }
+  return { imported, errors };
+});
+ipcMain.on('lib:now-playing', (_e, np) => onLocalState(np));
+ipcMain.handle('lib:list', () => library.list());
+ipcMain.handle('lib:add', () => library.pickAndImport(libraryWin || win));
+ipcMain.handle('lib:add-paths', (_e, paths) => {
+  if (!Array.isArray(paths)) return { added: 0, skipped: 0 };
+  return library.importFiles(paths.filter((p) => typeof p === 'string' && p.length < 1024));
+});
+ipcMain.handle('lib:remove', (_e, id) => library.remove(String(id)));
 ipcMain.on('tb:ad-skipped', (_e, how) => log(`Ad handled (${how})`));
 ipcMain.handle('tb:segments', (_e, videoId) => getSegments(videoId));
 ipcMain.handle('tb:settings-get', () => ({ config: config.load(), discordStatus: discord.status, version: app.getVersion() }));
@@ -480,6 +722,9 @@ config.onChange((cfg, before) => {
 app.on('second-instance', showWindow);
 
 app.whenReady().then(async () => {
+  library.handleProtocol(session.defaultSession);
+  // Developer test hook: import files given on the environment (semicolon-separated)
+  if (process.env.TUNEBOX_IMPORT) library.importFiles(process.env.TUNEBOX_IMPORT.split(';')).then((r) => log(`Test import: ${JSON.stringify(r)}`));
   const ses = session.fromPartition(PARTITION);
   // Grant media keys / notifications etc. but nothing exotic
   ses.setPermissionRequestHandler((_wc, permission, cb) => {
@@ -493,6 +738,18 @@ app.whenReady().then(async () => {
 
   discord.setClientId(config.get('discordClientId'));
   discord.setEnabled(config.get('discord'));
+  spotify.setClientId(config.get('spotifyClientId'));
+  playlists.init({
+    log,
+    onChange: (ev) => playlistsWin?.webContents.send('pl:changed', ev),
+  });
+  // Developer test hook: import a playlist export file on startup
+  if (process.env.TUNEBOX_IMPORT_PLAYLIST) {
+    try { for (const p of spotify.readExportFile(process.env.TUNEBOX_IMPORT_PLAYLIST)) playlists.add(p.name, 'file', p.tracks); } catch (e) { log(`Test playlist import failed: ${e.message}`); }
+  }
+  // After each page load (e.g. moving through an imported playlist), re-send the queue flag
+  win.webContents.on('did-finish-load', setQueueFlag);
+
   updater.init({
     logger: log,
     onChange: (state) => {

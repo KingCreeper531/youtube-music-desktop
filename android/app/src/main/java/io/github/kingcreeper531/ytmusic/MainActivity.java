@@ -27,8 +27,21 @@ public class MainActivity extends Activity {
     static final String HOME = "https://music.youtube.com/";
     private static WeakReference<MainActivity> current = new WeakReference<>(null);
 
+    private static final int REQ_PICK_AUDIO = 42;
+
     WebView web;
     Updater updater;
+    LibraryStore library;
+    private android.widget.FrameLayout root;
+    private BackgroundWebView libWeb;
+    private boolean libraryShown;
+    private final java.util.concurrent.ExecutorService io = java.util.concurrent.Executors.newSingleThreadExecutor();
+
+    // Two sources can play: YouTube Music and My Music. Starting one pauses the other.
+    private String activeSource = "ytm";
+    private NowPlaying ytmNp;
+    private NowPlaying localNp;
+
     private String injectJs;
     private boolean documentStartScript;
 
@@ -40,9 +53,12 @@ public class MainActivity extends Activity {
         current = new WeakReference<>(this);
 
         if (BuildConfig.DEBUG) WebView.setWebContentsDebuggingEnabled(true);
+        library = new LibraryStore(this);
         web = new BackgroundWebView(this);
         web.setBackgroundColor(0xFF030303);
-        setContentView(web);
+        root = new android.widget.FrameLayout(this);
+        root.addView(web);
+        setContentView(root);
 
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
@@ -93,10 +109,104 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** Runs a player command inside the page (play, pause, next, previous, seek). */
+    /** Runs a player command (play, pause, toggle, next, previous, seek) on whichever source is active. */
     void control(String action, double arg) {
-        runOnUiThread(() -> web.evaluateJavascript(
-                "window.__tbControl && window.__tbControl('" + action + "'," + arg + ")", null));
+        runOnUiThread(() -> {
+            if ("local".equals(activeSource) && libWeb != null) controlLibrary(action, arg);
+            else controlYouTubeMusic(action, arg);
+        });
+    }
+
+    private void controlYouTubeMusic(String action, double arg) {
+        web.evaluateJavascript("window.__tbControl && window.__tbControl('" + action + "'," + arg + ")", null);
+    }
+
+    private void controlLibrary(String action, double arg) {
+        if (libWeb != null) libWeb.evaluateJavascript("window.__libControl && window.__libControl('" + action + "'," + arg + ")", null);
+    }
+
+    // ------------------------------------------------------------------ sources
+    void onYtmState(NowPlaying np) {
+        ytmNp = np;
+        if (np != null && np.playing) {
+            if (localNp != null && localNp.playing) controlLibrary("pause", 0);
+            activeSource = "ytm";
+        }
+        if ("ytm".equals(activeSource) && np != null) PlaybackService.update(this, np);
+    }
+
+    void onLocalState(NowPlaying np) {
+        localNp = np;
+        if (np != null && np.playing) {
+            if (ytmNp != null && ytmNp.playing) controlYouTubeMusic("pause", 0);
+            activeSource = "local";
+        }
+        if (np == null) {
+            if ("local".equals(activeSource)) {
+                activeSource = "ytm";
+                if (ytmNp != null) PlaybackService.update(this, ytmNp);
+            }
+            return;
+        }
+        if ("local".equals(activeSource)) PlaybackService.update(this, np);
+    }
+
+    // ------------------------------------------------------------------ My Music
+    void openLibrary() {
+        if (libWeb == null) {
+            libWeb = new BackgroundWebView(this);
+            libWeb.setBackgroundColor(0xFF030303);
+            WebSettings ls = libWeb.getSettings();
+            ls.setJavaScriptEnabled(true);
+            ls.setDomStorageEnabled(true);
+            ls.setAllowFileAccess(true); // play the copies stored in the app's private folder
+            ls.setMediaPlaybackRequiresUserGesture(false);
+            libWeb.addJavascriptInterface(new LibraryBridge(this), "TBLibrary");
+            libWeb.setWebViewClient(new WebViewClient() {
+                @Override
+                public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest req) {
+                    return true; // the library page never navigates anywhere
+                }
+            });
+            root.addView(libWeb);
+            libWeb.loadUrl("file:///android_asset/library.html");
+        }
+        libWeb.bringToFront();
+        libraryShown = true;
+    }
+
+    void showYouTubeMusic() {
+        web.bringToFront();
+        libraryShown = false;
+    }
+
+    void pickAudio() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+                .addCategory(Intent.CATEGORY_OPENABLE)
+                .setType("audio/*")
+                .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        try {
+            startActivityForResult(i, REQ_PICK_AUDIO);
+        } catch (Exception ignored) { }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_PICK_AUDIO || resultCode != RESULT_OK || data == null) return;
+        java.util.List<Uri> uris = new java.util.ArrayList<>();
+        if (data.getClipData() != null) {
+            for (int i = 0; i < data.getClipData().getItemCount(); i++) uris.add(data.getClipData().getItemAt(i).getUri());
+        } else if (data.getData() != null) {
+            uris.add(data.getData());
+        }
+        if (uris.isEmpty()) return;
+        io.execute(() -> {
+            String result = library.importUris(uris);
+            runOnUiThread(() -> {
+                if (libWeb != null) libWeb.evaluateJavascript("window.__libRefresh && window.__libRefresh(" + result + ")", null);
+            });
+        });
     }
 
     void evaluate(String js) {
@@ -117,7 +227,8 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (web.canGoBack()) web.goBack();
+        if (libraryShown) showYouTubeMusic(); // the song keeps playing
+        else if (web.canGoBack()) web.goBack();
         else moveTaskToBack(true); // keep playing instead of closing
     }
 
@@ -131,6 +242,8 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         PlaybackService.stop(this);
         updater.stop();
+        io.shutdownNow();
+        if (libWeb != null) libWeb.destroy();
         web.destroy();
         super.onDestroy();
     }

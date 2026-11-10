@@ -14,6 +14,7 @@ import android.graphics.drawable.Icon;
 import android.media.MediaMetadata;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -50,6 +51,7 @@ public class PlaybackService extends Service {
 
     /** Called on the main thread whenever the page reports a change. */
     static void update(Context ctx, NowPlaying np) {
+        if (np == null) return;
         latest = np;
         if (instance != null) {
             instance.apply();
@@ -187,7 +189,20 @@ public class PlaybackService extends Service {
     }
 
     private void loadArt(String url) {
-        if (url == null || !url.startsWith("https://")) return;
+        if (url == null) return;
+        if (url.startsWith("file://")) { // cover art from a My Music file
+            io.execute(() -> {
+                Bitmap bmp = BitmapFactory.decodeFile(Uri.parse(url).getPath());
+                main.post(() -> {
+                    if (url.equals(artUrl) && bmp != null) {
+                        art = bmp;
+                        apply();
+                    }
+                });
+            });
+            return;
+        }
+        if (!url.startsWith("https://")) return;
         io.execute(() -> {
             try {
                 HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();

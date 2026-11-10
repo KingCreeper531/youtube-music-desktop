@@ -36,7 +36,7 @@ final class Bridge {
             np.positionMs = (long) (o.optDouble("position", 0) * 1000);
             np.durationMs = (long) (o.optDouble("duration", 0) * 1000);
             np.playing = o.optBoolean("playing");
-            activity.runOnUiThread(() -> PlaybackService.update(activity, np));
+            activity.runOnUiThread(() -> activity.onYtmState(np));
         } catch (Exception ignored) { }
     }
 
@@ -64,6 +64,11 @@ final class Bridge {
             } catch (Exception ignored) { /* no segments or offline */ }
             activity.evaluate("window.__tbSegments && window.__tbSegments('" + videoId + "'," + list + ")");
         });
+    }
+
+    @JavascriptInterface
+    public void openLibrary() {
+        activity.runOnUiThread(activity::openLibrary);
     }
 
     @JavascriptInterface

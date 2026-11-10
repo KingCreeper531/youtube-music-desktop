@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src https: data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<title>Playlists</title>
+<style>
+  :root { --bg: #030303; --side: #0f0f0f; --row: #181818; --line: #262626; --text: #fff; --muted: #aaa; --red: #ff0033; --ok: #3ddc84; --warn: #ffb020; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.4 Roboto, "Segoe UI", system-ui, sans-serif;
+    display: grid; grid-template-columns: 280px 1fr; overflow: hidden; }
+  button { font: inherit; cursor: pointer; color: inherit; }
+  a { color: #8ab4ff; }
+  .primary { background: #fff; color: #000; border: 0; border-radius: 18px; padding: 8px 16px; font-weight: 600; }
+  .primary:hover { background: #e6e6e6; }
+  .primary:disabled { opacity: .5; cursor: default; }
+  .ghost { background: transparent; border: 1px solid #3a3a3a; border-radius: 18px; padding: 7px 14px; }
+  .ghost:hover { background: #1f1f1f; }
+  .danger:hover { border-color: #a33; color: #ff8080; }
+
+  aside { background: var(--side); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  aside header { padding: 18px 16px 10px; }
+  aside h1 { font-size: 20px; margin: 0 0 12px; }
+  .imports { display: flex; flex-direction: column; gap: 8px; }
+  .imports button { width: 100%; }
+  #lists { overflow-y: auto; padding: 8px; flex: 1; }
+  .item { padding: 10px 12px; border-radius: 8px; cursor: pointer; }
+  .item:hover { background: #1a1a1a; }
+  .item.sel { background: #242424; }
+  .item .n { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .item .s { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .bar { height: 3px; background: #333; border-radius: 2px; margin-top: 6px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--red); }
+
+  main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .head { padding: 24px 28px 16px; border-bottom: 1px solid var(--line); }
+  .head h2 { font-size: 26px; margin: 0 0 6px; outline: none; }
+  .head .meta { color: var(--muted); }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  #tracks { overflow-y: auto; flex: 1; padding: 8px 16px 24px; }
+  .tr { display: grid; grid-template-columns: 32px minmax(0,1fr) 20px minmax(0,1fr) 48px; gap: 12px; align-items: center;
+    padding: 7px 12px; border-radius: 6px; }
+  .tr.can { cursor: pointer; }
+  .tr.can:hover { background: var(--row); }
+  .tr.now { background: #1f1f1f; }
+  .tr.now .t1 { color: var(--red); }
+  .num { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+  .t1, .t2 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .a1, .a2 { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .arrow { color: #555; text-align: center; }
+  .dur { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+  .nf { color: #ff8080; } .wait { color: var(--warn); }
+  .empty { margin: auto; text-align: center; color: var(--muted); max-width: 460px; padding: 24px; line-height: 1.6; }
+  .empty b { color: var(--text); font-size: 18px; display: block; margin-bottom: 6px; }
+
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none; place-content: center; z-index: 10; }
+  .modal.open { display: grid; }
+  .card { width: min(620px, 92vw); max-height: 86vh; overflow-y: auto; background: #181818; border: 1px solid #2c2c2c; border-radius: 12px; padding: 22px 24px; }
+  .card h3 { margin: 0 0 4px; font-size: 20px; }
+  .card .sub { color: var(--muted); margin: 0 0 14px; }
+  .card ol { padding-left: 20px; color: #ddd; line-height: 1.7; margin: 8px 0 14px; }
+  code { background: #0d0d0d; border: 1px solid #333; border-radius: 4px; padding: 2px 6px; font-size: 13px; user-select: all; }
+  .card input[type=text] { width: 100%; padding: 9px 12px; border-radius: 6px; border: 1px solid #333; background: #0d0d0d; color: var(--text); font: inherit; }
+  .row2 { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin-top: 16px; }
+  .row2 .spacer { flex: 1; }
+  .err { color: #ff8080; margin-top: 10px; white-space: pre-wrap; }
+  .sp { display: flex; align-items: center; gap: 10px; padding: 8px 6px; border-radius: 6px; cursor: pointer; }
+  .sp:hover { background: #222; }
+  .sp img, .sp .ph { width: 40px; height: 40px; border-radius: 4px; object-fit: cover; background: #2a2a2a; flex: none; }
+  .sp .n { flex: 1; min-width: 0; }
+  .sp .n div:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sp .n div:last-child { color: var(--muted); font-size: 12px; }
+  .sp input { width: 18px; height: 18px; accent-color: var(--red); }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<aside>
+  <header>
+    <h1>Playlists</h1>
+    <div class="imports">
+      <button class="primary" id="fromSpotify">Import from Spotify</button>
+      <button class="ghost" id="fromFile">Import a file (CSV / JSON)</button>
+    </div>
+  </header>
+  <div id="lists"></div>
+</aside>
+<main id="main"></main>
+
+<div class="modal" id="modal"><div class="card" id="card"></div></div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let lists = [];
+  let selected = null;
+  let detail = null;
+  let nowPlaying = null; // { playlistId, videoId }
+
+  const fmt = (s) => { s = Math.round(s || 0); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+  const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids.filter((k) => k != null)); return e; };
+
+  // ------------------------------------------------------------ sidebar
+  async function loadLists() {
+    lists = await pl.list();
+    if (selected && !lists.some((l) => l.id === selected)) selected = null;
+    if (!selected && lists.length) selected = lists[0].id;
+    renderLists();
+    await loadDetail();
+  }
+
+  function statusText(l) {
+    if (l.pending) return `Matching… ${l.matched + l.notFound}/${l.total}`;
+    return `${l.matched}/${l.total} songs found`;
+  }
+
+  function renderLists() {
+    const box = $('lists');
+    box.replaceChildren();
+    for (const l of lists) {
+      const done = l.total ? (l.matched + l.notFound) / l.total : 1;
+      const item = el('div', { className: 'item' + (l.id === selected ? ' sel' : '') },
+        el('div', { className: 'n', textContent: l.name, title: l.name }),
+        el('div', { className: 's', textContent: (l.source === 'spotify' ? 'Spotify · ' : 'File · ') + statusText(l) }),
+        l.pending ? el('div', { className: 'bar' }, el('i', { style: `width:${Math.round(done * 100)}%` })) : null);
+      item.addEventListener('click', async () => { selected = l.id; renderLists(); await loadDetail(); });
+      box.appendChild(item);
+    }
+  }
+
+  // ------------------------------------------------------------ detail
+  async function loadDetail() {
+    detail = selected ? await pl.get(selected) : null;
+    renderDetail();
+  }
+
+  function renderDetail() {
+    const main = $('main');
+    main.replaceChildren();
+    if (!detail) {
+      main.appendChild(el('div', { className: 'empty', innerHTML:
+        '<b>Bring your Spotify playlists over</b>Click <b>Import from Spotify</b> to pick playlists from your account, or <b>Import a file</b> if you exported them as CSV (for example with Exportify) or downloaded your Spotify data. Each song is matched to the same song on YouTube Music, then you can play the whole playlist here, ad-free.' }));
+      return;
+    }
+    const d = detail;
+    const title = el('h2', { textContent: d.name, title: 'Double-click to rename' });
+    title.addEventListener('dblclick', () => {
+      title.contentEditable = 'true';
+      title.focus();
+      document.getSelection().selectAllChildren(title);
+    });
+    title.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); title.blur(); } });
+    title.addEventListener('blur', async () => {
+      if (title.contentEditable !== 'true') return;
+      title.contentEditable = 'false';
+      const name = title.textContent.trim();
+      if (name && name !== d.name) { await pl.rename(d.id, name); await loadLists(); }
+    });
+
+    const meta = `${d.total} songs · ${d.matched} found on YouTube Music` +
+      (d.notFound ? ` · ${d.notFound} not found` : '') + (d.pending ? ` · matching ${d.pending} more…` : '');
+    const play = el('button', { className: 'primary', textContent: '▶ Play', disabled: !d.matched });
+    play.addEventListener('click', () => pl.play({ id: d.id }));
+    const shuffle = el('button', { className: 'ghost', textContent: 'Shuffle', disabled: !d.matched });
+    shuffle.addEventListener('click', () => pl.play({ id: d.id, shuffle: true }));
+    const retry = d.notFound ? el('button', { className: 'ghost', textContent: `Retry ${d.notFound} not found` }) : null;
+    if (retry) retry.addEventListener('click', async () => { await pl.retry(d.id); await loadLists(); });
+    const del = el('button', { className: 'ghost danger', textContent: 'Delete playlist' });
+    del.addEventListener('click', async () => {
+      if (!confirm(`Delete "${d.name}" from this app?\nYour Spotify playlist isn't affected.`)) return;
+      await pl.remove(d.id);
+      selected = null;
+      await loadLists();
+    });
+
+    main.appendChild(el('div', { className: 'head' }, title, el('div', { className: 'meta', textContent: meta }),
+      el('div', { className: 'actions' }, play, shuffle, retry, del)));
+
+    const box = el('div', { id: 'tracks' });
+    d.tracks.forEach((t, i) => {
+      const m = t.match;
+      const isNow = nowPlaying && nowPlaying.playlistId === d.id && m && nowPlaying.videoId === m.videoId;
+      let right;
+      if (t.status === 'matched') right = el('div', {}, el('div', { className: 't2', textContent: m.title, title: m.title }), el('div', { className: 'a2', textContent: m.artist }));
+      else if (t.status === 'notfound') right = el('div', { className: 'nf', textContent: 'Not found on YouTube Music' });
+      else right = el('div', { className: 'wait', textContent: 'Searching…' });
+      const row = el('div', { className: 'tr' + (m ? ' can' : '') + (isNow ? ' now' : '') },
+        el('div', { className: 'num', textContent: i + 1 }),
+        el('div', {}, el('div', { className: 't1', textContent: t.title, title: t.title }), el('div', { className: 'a1', textContent: t.artist })),
+        el('div', { className: 'arrow', textContent: '→' }),
+        right,
+        el('div', { className: 'dur', textContent: m && m.duration ? fmt(m.duration) : (t.durationMs ? fmt(t.durationMs / 1000) : '') }));
+      if (m) row.addEventListener('click', () => pl.play({ id: d.id, videoId: m.videoId }));
+      box.appendChild(row);
+    });
+    main.appendChild(box);
+  }
+
+  // ------------------------------------------------------------ Spotify import
+  const modal = $('modal');
+  const card = $('card');
+  function closeModal() { modal.classList.remove('open'); }
+  modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+
+  async function openSpotify() {
+    modal.classList.add('open');
+    const st = await sp.status();
+    if (st.connected && st.clientId) return showSpotifyPlaylists();
+    showSpotifySetup(st);
+  }
+
+  function showSpotifySetup(st, error) {
+    card.innerHTML = `
+      <h3>Connect Spotify</h3>
+      <p class="sub">One-time setup. Spotify asks every app that reads your playlists to have its own free "developer app".</p>
+      <ol>
+        <li>Open the <a href="https://developer.spotify.com/dashboard" target="_blank">Spotify Developer Dashboard</a>, sign in, and click <b>Create app</b>.</li>
+        <li>Give it any name and description. Under <b>Redirect URIs</b> add <code id="ru"></code>, tick <b>Web API</b>, agree and <b>Save</b>.</li>
+        <li>Copy the app's <b>Client ID</b> and paste it below.</li>
+      </ol>
+      <input type="text" id="cid" placeholder="Client ID (32 letters and numbers)" spellcheck="false">
+      <div class="err" id="err"></div>
+      <div class="row2"><button class="ghost" id="cancel">Cancel</button><button class="primary" id="go">Connect to Spotify</button></div>`;
+    $('ru').textContent = st.redirectUri;
+    $('cid').value = st.clientId || '';
+    if (error) $('err').textContent = error;
+    $('cancel').onclick = closeModal;
+    $('go').onclick = async () => {
+      const id = $('cid').value.trim();
+      if (!/^[0-9a-f]{32}$/i.test(id)) { $('err').textContent = 'That doesn\'t look like a Client ID. It\'s 32 letters and numbers.'; return; }
+      await sp.setClientId(id);
+      $('go').disabled = true;
+      $('go').textContent = 'Waiting for Spotify in your browser…';
+      $('err').textContent = '';
+      const res = await sp.connect();
+      if (res.ok) showSpotifyPlaylists();
+      else showSpotifySetup(await sp.status(), res.error);
+    };
+  }
+
+  async function showSpotifyPlaylists() {
+    card.innerHTML = '<h3>Import from Spotify</h3><p class="sub">Loading your playlists…</p>';
+    const res = await sp.playlists();
+    if (!res.ok) {
+      card.innerHTML = `<h3>Import from Spotify</h3><div class="err"></div>
+        <div class="row2"><button class="ghost" id="disc">Disconnect Spotify</button><span class="spacer"></span><button class="ghost" id="cancel">Close</button></div>`;
+      card.querySelector('.err').textContent = `Spotify said: ${res.error}`;
+      $('cancel').onclick = closeModal;
+      $('disc').onclick = async () => { await sp.disconnect(); showSpotifySetup(await sp.status()); };
+      return;
+    }
+    card.innerHTML = `<h3>Import from Spotify</h3><p class="sub">Pick the playlists to bring over.</p>
+      <label class="sp" style="border-bottom:1px solid #2a2a2a;border-radius:0"><input type="checkbox" id="all"><span>Select all</span></label>
+      <div id="sps"></div><div class="err" id="err"></div>
+      <div class="row2"><button class="ghost" id="disc">Disconnect</button><span class="spacer"></span>
+        <button class="ghost" id="cancel">Cancel</button><button class="primary" id="imp" disabled>Import</button></div>`;
+    const box = $('sps');
+    const boxes = [];
+    for (const p of res.playlists) {
+      const cb = el('input', { type: 'checkbox' });
+      boxes.push({ cb, p });
+      const img = p.image ? el('img', { src: p.image, alt: '' }) : el('div', { className: 'ph' });
+      const count = p.count == null ? '' : ` · ${p.count} songs`;
+      box.appendChild(el('label', { className: 'sp' }, cb, img,
+        el('div', { className: 'n' }, el('div', { textContent: p.name }), el('div', { textContent: (p.owner ? 'by ' + p.owner : '') + count }))));
+    }
+    const update = () => {
+      const n = boxes.filter((b) => b.cb.checked).length;
+      $('imp').disabled = !n;
+      $('imp').textContent = n ? `Import ${n} playlist${n === 1 ? '' : 's'}` : 'Import';
+      $('all').checked = n === boxes.length;
+    };
+    boxes.forEach((b) => b.cb.addEventListener('change', update));
+    $('all').addEventListener('change', () => { boxes.forEach((b) => { b.cb.checked = $('all').checked; }); update(); });
+    $('cancel').onclick = closeModal;
+    $('disc').onclick = async () => { await sp.disconnect(); showSpotifySetup(await sp.status()); };
+    $('imp').onclick = async () => {
+      const items = boxes.filter((b) => b.cb.checked).map((b) => ({ id: b.p.id, name: b.p.name, image: b.p.image }));
+      $('imp').disabled = true;
+      $('imp').textContent = 'Importing…';
+      const r = await sp.import(items);
+      if (r.errors && r.errors.length) {
+        $('err').textContent = (r.imported ? `Imported ${r.imported}. ` : '') + 'Some playlists couldn\'t be read:\n' + r.errors.join('\n');
+        $('imp').textContent = 'Import';
+        update();
+      } else {
+        closeModal();
+      }
+      selected = null;
+      await loadLists();
+    };
+  }
+
+  $('fromSpotify').addEventListener('click', openSpotify);
+  $('fromFile').addEventListener('click', async () => {
+    const r = await pl.importFile();
+    if (r.errors && r.errors.length) alert('Some files couldn\'t be imported:\n\n' + r.errors.join('\n'));
+    if (r.imported) { selected = null; await loadLists(); }
+  });
+
+  // ------------------------------------------------------------ live updates
+  let refreshTimer = null;
+  pl.onChanged((ev) => {
+    if (ev.type === 'progress') {
+      const i = lists.findIndex((l) => l.id === ev.id);
+      if (i >= 0) { lists[i] = ev.summary; }
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(async () => { renderLists(); if (ev.id === selected) await loadDetail(); }, 300);
+    } else {
+      loadLists();
+    }
+  });
+  pl.onQueue((q) => { nowPlaying = q; renderDetail(); });
+  pl.queue().then((q) => { nowPlaying = q; });
+
+  loadLists();
+</script>
+</body>
+</html>

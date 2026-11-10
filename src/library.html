@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' tbmedia: data:; media-src tbmedia:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'">
+<title>My Music</title>
+<style>
+  :root {
+    --bg: #030303; --panel: #121212; --row: #181818; --line: #262626; --text: #fff; --muted: #aaa;
+    --red: #ff0033; --green: #1ed760;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 Roboto, "Segoe UI", system-ui, sans-serif;
+    display: grid; grid-template-rows: auto 1fr auto; overflow: hidden; user-select: none; }
+
+  header { display: flex; align-items: center; gap: 12px; padding: 18px 24px 14px; border-bottom: 1px solid var(--line); }
+  h1 { font-size: 22px; margin: 0; flex: none; }
+  .count { color: var(--muted); font-size: 13px; flex: none; }
+  .spacer { flex: 1; }
+  input[type=search] { width: 260px; max-width: 40vw; padding: 8px 12px; border-radius: 18px; border: 1px solid var(--line);
+    background: #1c1c1c; color: var(--text); font: inherit; outline: none; }
+  input[type=search]:focus { border-color: #555; }
+  button { font: inherit; cursor: pointer; }
+  .primary { background: #fff; color: #000; border: 0; border-radius: 18px; padding: 8px 16px; font-weight: 600; }
+  .primary:hover { background: #e6e6e6; }
+
+  main { overflow-y: auto; padding: 8px 12px 16px; }
+  .empty { height: 100%; display: grid; place-content: center; text-align: center; color: var(--muted); gap: 10px; }
+  .empty b { color: var(--text); font-size: 18px; }
+  .row { display: grid; grid-template-columns: 28px 44px minmax(0, 3fr) minmax(0, 2fr) minmax(0, 2fr) 56px 32px;
+    align-items: center; gap: 12px; padding: 6px 12px; border-radius: 6px; cursor: default; }
+  .row:hover { background: var(--row); }
+  .row.playing { background: #1f1f1f; }
+  .row.playing .title { color: var(--red); }
+  .num { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+  .art { width: 44px; height: 44px; border-radius: 4px; background: #2a2a2a center/cover no-repeat; display: grid; place-content: center; color: #666; }
+  .title, .artist, .album { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .title { font-weight: 500; }
+  .artist, .album, .dur { color: var(--muted); }
+  .dur { text-align: right; font-variant-numeric: tabular-nums; }
+  .del { visibility: hidden; background: none; border: 0; color: var(--muted); padding: 4px; border-radius: 50%; }
+  .row:hover .del { visibility: visible; }
+  .del:hover { color: #fff; background: #333; }
+
+  footer { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 16px;
+    padding: 10px 18px; background: var(--panel); border-top: 1px solid var(--line); }
+  .now { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .now .art { width: 52px; height: 52px; flex: none; }
+  .now div { min-width: 0; }
+  .now .t { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .now .a { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .center { display: flex; flex-direction: column; align-items: center; gap: 6px; width: min(560px, 46vw); }
+  .controls { display: flex; align-items: center; gap: 14px; }
+  .icon { background: none; border: 0; color: #ddd; padding: 6px; border-radius: 50%; display: grid; place-content: center; }
+  .icon:hover { color: #fff; background: #2a2a2a; }
+  .icon.on { color: var(--red); }
+  .play { width: 40px; height: 40px; background: #fff; color: #000; }
+  .play:hover { background: #e6e6e6; color: #000; }
+  .seek { display: flex; align-items: center; gap: 10px; width: 100%; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  input[type=range] { flex: 1; accent-color: var(--red); height: 4px; }
+  .right { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+  .right input { flex: none; width: 110px; }
+  svg { width: 20px; height: 20px; fill: currentColor; }
+  .play svg { width: 24px; height: 24px; }
+
+  .drop { position: fixed; inset: 0; background: rgba(0,0,0,.75); border: 3px dashed var(--red); display: none;
+    place-content: center; font-size: 20px; font-weight: 600; z-index: 10; }
+  body.dragging .drop { display: grid; }
+  .toast { position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%); background: #333; color: #fff;
+    padding: 10px 16px; border-radius: 6px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>My Music</h1>
+  <span class="count" id="count"></span>
+  <span class="spacer"></span>
+  <input type="search" id="search" placeholder="Search your music" spellcheck="false">
+  <button class="primary" id="add">+ Add music</button>
+</header>
+
+<main id="list"></main>
+
+<footer>
+  <div class="now">
+    <div class="art" id="nowArt"></div>
+    <div><div class="t" id="nowTitle">Nothing playing</div><div class="a" id="nowArtist"></div></div>
+  </div>
+  <div class="center">
+    <div class="controls">
+      <button class="icon" id="shuffle" title="Shuffle"><svg viewBox="0 0 24 24"><path d="M10.6 9.2 5.4 4 4 5.4l5.2 5.2 1.4-1.4ZM14.5 4l2 2L4 18.6 5.4 20 18 7.5l2 2V4h-5.5Zm.3 9.4-1.4 1.4 3.1 3.1-2 2.1H20v-5.5l-2 2-3.2-3.1Z"/></svg></button>
+      <button class="icon" id="prev" title="Previous"><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6V6Zm3.5 6 8.5 6V6l-8.5 6Z"/></svg></button>
+      <button class="icon play" id="play" title="Play"><svg viewBox="0 0 24 24" id="playIcon"><path d="M8 5v14l11-7L8 5Z"/></svg></button>
+      <button class="icon" id="next" title="Next"><svg viewBox="0 0 24 24"><path d="M16 6h2v12h-2V6ZM6 18l8.5-6L6 6v12Z"/></svg></button>
+      <button class="icon" id="repeat" title="Repeat"><svg viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7Zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4Z"/></svg></button>
+    </div>
+    <div class="seek"><span id="cur">0:00</span><input type="range" id="seek" min="0" max="1000" value="0"><span id="dur">0:00</span></div>
+  </div>
+  <div class="right">
+    <svg viewBox="0 0 24 24" style="color:#aaa"><path d="M3 9v6h4l5 5V4L7 9H3Zm13.5 3A4.5 4.5 0 0 0 14 8v8a4.5 4.5 0 0 0 2.5-4Z"/></svg>
+    <input type="range" id="volume" min="0" max="100" value="80">
+  </div>
+</footer>
+
+<div class="drop">Drop music files to add them</div>
+<div class="toast" id="toast"></div>
+<audio id="audio" preload="metadata"></audio>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const audio = $('audio');
+  let tracks = [];
+  let queue = [];          // ids in play order
+  let current = null;      // track object
+  let shuffle = false;
+  let repeat = 'off';      // off | all | one
+
+  const PLAY = '<path d="M8 5v14l11-7L8 5Z"/>';
+  const PAUSE = '<path d="M6 5h4v14H6V5Zm8 0h4v14h-4V5Z"/>';
+  const NOTE = '<svg viewBox="0 0 24 24" style="width:20px;height:20px"><path d="M12 3v10.6A4 4 0 1 0 14 17V7h4V3h-6Z"/></svg>';
+
+  const fmt = (s) => {
+    if (!isFinite(s) || s < 0) s = 0;
+    const m = Math.floor(s / 60), ss = Math.floor(s % 60);
+    return m + ':' + String(ss).padStart(2, '0');
+  };
+  function toast(msg) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(() => t.classList.remove('show'), 2500);
+  }
+
+  function filtered() {
+    const q = $('search').value.trim().toLowerCase();
+    if (!q) return tracks;
+    return tracks.filter((t) => (t.title + ' ' + t.artist + ' ' + t.album).toLowerCase().includes(q));
+  }
+
+  function render() {
+    const list = $('list');
+    const items = filtered();
+    $('count').textContent = tracks.length ? tracks.length + (tracks.length === 1 ? ' song' : ' songs') : '';
+    list.replaceChildren();
+    if (!tracks.length) {
+      list.innerHTML = '<div class="empty"><b>Your music, ad-free</b><span>Click <b>+ Add music</b> or drag MP3, M4A, FLAC, WAV or OGG files here.</span></div>';
+      return;
+    }
+    items.forEach((t, i) => {
+      const row = document.createElement('div');
+      row.className = 'row' + (current && current.id === t.id ? ' playing' : '');
+      const art = document.createElement('div');
+      art.className = 'art';
+      if (t.art) art.style.backgroundImage = 'url("' + t.art + '")'; else art.innerHTML = NOTE;
+      const cells = [
+        Object.assign(document.createElement('div'), { className: 'num', textContent: i + 1 }),
+        art,
+        Object.assign(document.createElement('div'), { className: 'title', textContent: t.title, title: t.title }),
+        Object.assign(document.createElement('div'), { className: 'artist', textContent: t.artist, title: t.artist }),
+        Object.assign(document.createElement('div'), { className: 'album', textContent: t.album, title: t.album }),
+        Object.assign(document.createElement('div'), { className: 'dur', textContent: fmt(t.duration) }),
+      ];
+      const del = document.createElement('button');
+      del.className = 'del';
+      del.title = 'Remove from My Music';
+      del.innerHTML = '<svg viewBox="0 0 24 24" style="width:18px;height:18px"><path d="M7 21a2 2 0 0 1-2-2V6H4V4h5V3h6v1h5v2h-1v13a2 2 0 0 1-2 2H7Zm2-4h2V8H9v9Zm4 0h2V8h-2v9Z"/></svg>';
+      del.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!confirm('Remove "' + t.title + '" from My Music?\nYour original file is not deleted.')) return;
+        if (current && current.id === t.id) { audio.pause(); current = null; updateNow(); }
+        await library.remove(t.id);
+        await refresh();
+      });
+      row.append(...cells, del);
+      row.addEventListener('click', () => {
+        if (current && current.id === t.id) toggle(); else playFrom(t.id, items);
+      });
+      list.appendChild(row);
+    });
+  }
+
+  async function refresh() {
+    tracks = await library.list();
+    render();
+  }
+
+  function buildQueue(items, firstId) {
+    const ids = items.map((t) => t.id);
+    if (!shuffle) return ids;
+    const rest = ids.filter((id) => id !== firstId);
+    for (let i = rest.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [rest[i], rest[j]] = [rest[j], rest[i]]; }
+    return firstId ? [firstId, ...rest] : rest;
+  }
+
+  function playFrom(id, items) {
+    queue = buildQueue(items || filtered(), id);
+    load(id, true);
+  }
+
+  function load(id, autoplay) {
+    const t = tracks.find((x) => x.id === id);
+    if (!t) return;
+    current = t;
+    audio.src = t.src;
+    if (autoplay) audio.play().catch(() => {});
+    updateNow();
+    render();
+  }
+
+  function step(dir) {
+    if (!current) { if (tracks.length) playFrom(filtered()[0].id); return; }
+    if (dir < 0 && audio.currentTime > 3) { audio.currentTime = 0; return; }
+    let i = queue.indexOf(current.id) + dir;
+    if (i >= queue.length) { if (repeat === 'all') i = 0; else { audio.pause(); audio.currentTime = 0; return; } }
+    if (i < 0) i = repeat === 'all' ? queue.length - 1 : 0;
+    load(queue[i], true);
+  }
+
+  function toggle() {
+    if (!current) { if (tracks.length) playFrom(filtered()[0].id); return; }
+    if (audio.paused) audio.play().catch(() => {}); else audio.pause();
+  }
+
+  function updateNow() {
+    $('nowTitle').textContent = current ? current.title : 'Nothing playing';
+    $('nowArtist').textContent = current ? current.artist : '';
+    const art = $('nowArt');
+    if (current && current.art) { art.style.backgroundImage = 'url("' + current.art + '")'; art.innerHTML = ''; }
+    else { art.style.backgroundImage = ''; art.innerHTML = current ? NOTE : ''; }
+    document.title = current ? current.title + ' · My Music' : 'My Music';
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.metadata = current ? new MediaMetadata({
+        title: current.title, artist: current.artist, album: current.album,
+        artwork: current.art ? [{ src: current.art, sizes: '512x512' }] : [],
+      }) : null;
+    }
+    report();
+  }
+
+  // Tell the app (Discord status, tray, pausing YouTube Music)
+  let lastReport = 0;
+  function report(force) {
+    if (!force && Date.now() - lastReport < 1000) return;
+    lastReport = Date.now();
+    library.reportState(current ? {
+      title: current.title, artist: current.artist, album: current.album,
+      duration: audio.duration || current.duration || 0, currentTime: audio.currentTime || 0,
+      paused: audio.paused, source: 'local',
+    } : null);
+  }
+
+  // ---------------------------------------------------------------- events
+  audio.addEventListener('play', () => { $('playIcon').innerHTML = PAUSE; $('play').title = 'Pause'; report(true); });
+  audio.addEventListener('pause', () => { $('playIcon').innerHTML = PLAY; $('play').title = 'Play'; report(true); });
+  audio.addEventListener('seeked', () => report(true));
+  audio.addEventListener('timeupdate', () => {
+    $('cur').textContent = fmt(audio.currentTime);
+    $('dur').textContent = fmt(audio.duration);
+    if (!seeking && audio.duration) $('seek').value = Math.round((audio.currentTime / audio.duration) * 1000);
+    report();
+  });
+  audio.addEventListener('ended', () => {
+    if (repeat === 'one') { audio.currentTime = 0; audio.play(); } else step(1);
+  });
+  audio.addEventListener('error', () => { toast('Couldn\'t play this file'); });
+
+  let seeking = false;
+  $('seek').addEventListener('input', () => { seeking = true; $('cur').textContent = fmt((audio.duration || 0) * $('seek').value / 1000); });
+  $('seek').addEventListener('change', () => { if (audio.duration) audio.currentTime = audio.duration * $('seek').value / 1000; seeking = false; });
+  $('volume').addEventListener('input', () => { audio.volume = $('volume').value / 100; localStorage.setItem('vol', $('volume').value); });
+  try { const v = localStorage.getItem('vol'); if (v) $('volume').value = v; } catch {}
+  audio.volume = $('volume').value / 100;
+
+  $('play').addEventListener('click', toggle);
+  $('next').addEventListener('click', () => step(1));
+  $('prev').addEventListener('click', () => step(-1));
+  $('shuffle').addEventListener('click', () => {
+    shuffle = !shuffle;
+    $('shuffle').classList.toggle('on', shuffle);
+    if (current) queue = buildQueue(filtered(), current.id);
+  });
+  $('repeat').addEventListener('click', () => {
+    repeat = repeat === 'off' ? 'all' : repeat === 'all' ? 'one' : 'off';
+    $('repeat').classList.toggle('on', repeat !== 'off');
+    $('repeat').title = repeat === 'one' ? 'Repeat one' : repeat === 'all' ? 'Repeat all' : 'Repeat';
+    $('repeat').style.position = 'relative';
+    $('repeat').dataset.one = repeat === 'one' ? '1' : '';
+  });
+  $('search').addEventListener('input', render);
+
+  async function afterAdd(res) {
+    if (res.added) toast('Added ' + res.added + (res.added === 1 ? ' song' : ' songs'));
+    else if (res.skipped) toast('Nothing new to add (already added or not an audio file)');
+    await refresh();
+  }
+  $('add').addEventListener('click', async () => afterAdd(await library.add()));
+
+  // Drag and drop
+  let dragDepth = 0;
+  window.addEventListener('dragenter', (e) => { e.preventDefault(); dragDepth++; document.body.classList.add('dragging'); });
+  window.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('dragging'); } });
+  window.addEventListener('dragover', (e) => e.preventDefault());
+  window.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    dragDepth = 0;
+    document.body.classList.remove('dragging');
+    if (e.dataTransfer.files.length) {
+      toast('Adding…');
+      await afterAdd(await library.addFiles(e.dataTransfer.files));
+    }
+  });
+
+  // Keyboard: space = play/pause, arrows = seek
+  window.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT' && e.target.type === 'search') return;
+    if (e.code === 'Space') { e.preventDefault(); toggle(); }
+    if (e.code === 'ArrowRight' && audio.duration) audio.currentTime = Math.min(audio.duration, audio.currentTime + 5);
+    if (e.code === 'ArrowLeft') audio.currentTime = Math.max(0, audio.currentTime - 5);
+  });
+
+  // Media keys / Windows media overlay
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.setActionHandler('play', () => audio.play());
+    navigator.mediaSession.setActionHandler('pause', () => audio.pause());
+    navigator.mediaSession.setActionHandler('nexttrack', () => step(1));
+    navigator.mediaSession.setActionHandler('previoustrack', () => step(-1));
+    navigator.mediaSession.setActionHandler('seekto', (d) => { audio.currentTime = d.seekTime; });
+  }
+
+  // Commands from the app (tray menu, YouTube Music starting to play)
+  library.onControl((action) => {
+    if (action === 'pause') audio.pause();
+    else if (action === 'playpause') toggle();
+    else if (action === 'next') step(1);
+    else if (action === 'previous') step(-1);
+  });
+
+  refresh();
+</script>
+</body>
+</html>

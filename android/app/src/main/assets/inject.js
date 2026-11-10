@@ -250,7 +250,37 @@
     btn.style.opacity = want.busy ? '0.85' : '1';
   }
   window.__tbUpdate = function (s) { update = s; renderButton(); };
-  setInterval(renderButton, 2000);
+
+  // ------------------------------------------------------ My Music button
+  var LIB_ID = 'tb-library-button';
+  function renderLibraryButton() {
+    var host = document.querySelector('ytmusic-nav-bar #right-content');
+    if (!host || !native) return;
+    var btn = document.getElementById(LIB_ID);
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.id = LIB_ID;
+      btn.type = 'button';
+      btn.setAttribute('aria-label', 'My Music');
+      btn.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;' +
+        'padding:0;margin:0 4px;border:1px solid rgba(255,255,255,.25);border-radius:50%;background:transparent;' +
+        'color:#fff;cursor:pointer;flex-shrink:0;order:-2;';
+      var NS = 'http://www.w3.org/2000/svg';
+      var svg = document.createElementNS(NS, 'svg');
+      svg.setAttribute('viewBox', '0 0 24 24');
+      svg.setAttribute('width', '20');
+      svg.setAttribute('height', '20');
+      svg.setAttribute('fill', 'currentColor');
+      var p = document.createElementNS(NS, 'path');
+      p.setAttribute('d', 'M12 3v10.6A4 4 0 1 0 14 17V7h4V3h-6Z');
+      svg.appendChild(p);
+      btn.appendChild(svg);
+      btn.addEventListener('click', function () { native.openLibrary(); });
+    }
+    if (btn.parentElement !== host) host.insertBefore(btn, host.firstChild);
+  }
+
+  setInterval(function () { renderButton(); renderLibraryButton(); }, 2000);
   if (native) {
     try { update = JSON.parse(native.updateState()); } catch (e) {}
   }
