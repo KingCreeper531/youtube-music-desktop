@@ -3,7 +3,9 @@
 const { app } = require('electron');
 const { autoUpdater } = require('electron-updater');
 
-const CHECK_EVERY_MS = 4 * 60 * 60 * 1000;
+const CHECK_EVERY_MS = 30 * 60 * 1000;       // background check every 30 minutes
+const FOCUS_CHECK_GAP_MS = 10 * 60 * 1000;   // and when you come back to the app, at most every 10 minutes
+let lastCheck = 0;
 
 let state = { status: 'idle', current: app.getVersion() };
 let onState = () => {};
@@ -52,11 +54,15 @@ function init({ onChange, logger, beforeInstall }) {
   }
   setTimeout(check, 5000);
   setInterval(check, CHECK_EVERY_MS);
+  app.on('browser-window-focus', () => {
+    if (Date.now() - lastCheck > FOCUS_CHECK_GAP_MS) check();
+  });
 }
 
 function check() {
   if (!app.isPackaged) return Promise.resolve(state);
-  if (['downloading', 'ready'].includes(state.status)) return Promise.resolve(state);
+  if (['downloading', 'ready', 'available'].includes(state.status)) return Promise.resolve(state);
+  lastCheck = Date.now();
   return autoUpdater.checkForUpdates().then(() => state).catch(() => state);
 }
 

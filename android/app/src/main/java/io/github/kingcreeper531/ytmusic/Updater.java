@@ -25,7 +25,9 @@ import java.util.concurrent.Executors;
  * the green Update button; Android then shows its own install confirmation.
  */
 final class Updater {
-    private static final long CHECK_EVERY_MS = 4L * 60 * 60 * 1000;
+    private static final long CHECK_EVERY_MS = 30L * 60 * 1000;        // every 30 minutes
+    private static final long RESUME_CHECK_GAP_MS = 10L * 60 * 1000;   // and when you reopen the app
+    private volatile long lastCheck;
 
     private final Activity activity;
     private final Runnable onChange;
@@ -67,7 +69,8 @@ final class Updater {
     }
 
     void check() {
-        if ("downloading".equals(status) || "ready".equals(status)) return;
+        if ("downloading".equals(status) || "ready".equals(status) || "available".equals(status)) return;
+        lastCheck = System.currentTimeMillis();
         io.execute(() -> {
             set("checking");
             try {
@@ -176,6 +179,7 @@ final class Updater {
 
     /** Called from the activity's onResume, e.g. after granting the install permission. */
     void onResume() {
+        if (lastCheck > 0 && System.currentTimeMillis() - lastCheck > RESUME_CHECK_GAP_MS) check();
         if (waitingForPermission && activity.getPackageManager().canRequestPackageInstalls()) {
             waitingForPermission = false;
             installApk();

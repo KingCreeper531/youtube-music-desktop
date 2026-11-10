@@ -6,6 +6,8 @@ const crypto = require('crypto');
 const OP = { HANDSHAKE: 0, FRAME: 1, CLOSE: 2, PING: 3, PONG: 4 };
 
 function pipePath(i) {
+  // Test hook: point at a fake Discord instead of the real one
+  if (process.env.TUNEBOX_DISCORD_PIPE) return `${process.env.TUNEBOX_DISCORD_PIPE}-${i}`;
   if (process.platform === 'win32') return `\\\\?\\pipe\\discord-ipc-${i}`;
   const base = process.env.XDG_RUNTIME_DIR || process.env.TMPDIR || process.env.TMP || '/tmp';
   return `${base.replace(/\/$/, '')}/discord-ipc-${i}`;
@@ -178,6 +180,38 @@ class DiscordPresence {
     }
     this.socket = null;
     this.ready = false;
+  }
+
+  /**
+   * Clears the status and closes the connection, waiting until Discord has the
+   * message (or 1 second at most). Use this when the app quits.
+   */
+  shutdown() {
+    this.enabled = false;
+    clearTimeout(this.retryTimer);
+    clearTimeout(this.sendTimer);
+    const sock = this.socket;
+    if (!sock || !this.ready) {
+      this.disconnect();
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      const finish = () => { clearTimeout(timer); try { sock.destroy(); } catch { /* ignore */ } resolve(); };
+      const timer = setTimeout(finish, 1000);
+      sock.removeAllListeners('close');
+      sock.once('close', finish);
+      // Wait for Discord's reply to the clear before hanging up
+      sock.removeAllListeners('data');
+      sock.once('data', () => sock.end());
+      try {
+        sock.write(encode(OP.FRAME, this._activityCmd(null)));
+      } catch {
+        finish();
+      }
+      this.socket = null;
+      this.ready = false;
+      this.status = 'off';
+    });
   }
 
   _activityCmd(activity) {

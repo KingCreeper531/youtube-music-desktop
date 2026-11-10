@@ -34,6 +34,15 @@ let quitting = false;
 let blocker = null;
 let nowPlaying = null;
 
+// "Closed to tray" = no app window is visible.
+function isClosedToTray() {
+  return !BrowserWindow.getAllWindows().some((w) => !w.isDestroyed() && w.isVisible());
+}
+function onWindowHiddenChanged() {
+  // Re-evaluate the Discord status (paused + hidden → cleared)
+  setImmediate(() => discord.setActivity(buildActivity(nowPlaying)));
+}
+
 const logFile = () => path.join(app.getPath('userData'), 'tunebox.log');
 function log(msg) {
   const line = `[${new Date().toISOString()}] ${msg}\n`;
@@ -229,8 +238,19 @@ function createWindow() {
     if (!quitting && config.get('closeToTray')) {
       e.preventDefault();
       win.hide();
+      onWindowHiddenChanged();
+      if (!config.get('trayHintShown') && tray) {
+        config.set({ trayHintShown: true });
+        tray.displayBalloon({
+          iconType: 'info',
+          title: 'YouTube Music is still running',
+          content: 'It keeps playing in the background. Right-click the tray icon and choose Quit to close it completely.',
+        });
+      }
     }
   });
+  win.on('show', onWindowHiddenChanged);
+  win.on('hide', onWindowHiddenChanged);
   win.on('closed', () => { win = null; });
 
   // Links that leave YouTube Music / Google sign-in open in the default browser
@@ -459,6 +479,8 @@ function openLibrary() {
       libraryWin.hide();
     }
   });
+  libraryWin.on('show', onWindowHiddenChanged);
+  libraryWin.on('hide', onWindowHiddenChanged);
   libraryWin.on('closed', () => {
     libraryWin = null;
     onLocalState(null);
@@ -508,6 +530,8 @@ function createTray() {
 function buildActivity(np) {
   if (!np || !np.title) return null;
   if (np.paused && config.get('discordHidePaused')) return null;
+  // Paused with the window closed to the tray: you're not listening, so clear the status
+  if (np.paused && isClosedToTray()) return null;
 
   const fit = (s, fallback) => {
     s = String(s || '').trim() || fallback;
@@ -769,9 +793,17 @@ app.whenReady().then(async () => {
   log(`YouTube Music ${app.getVersion()} started (Electron ${process.versions.electron})`);
 });
 
-app.on('before-quit', () => {
+// Clear the Discord status before the app exits. Hold the quit until Discord
+// has received the clear (at most 1 second), otherwise it can stay stuck.
+let discordCleared = false;
+app.on('before-quit', (e) => {
   quitting = true;
-  discord.setEnabled(false);
+  if (discordCleared) return;
+  e.preventDefault();
+  discord.shutdown().finally(() => {
+    discordCleared = true;
+    app.quit();
+  });
 });
 
 app.on('window-all-closed', () => {
