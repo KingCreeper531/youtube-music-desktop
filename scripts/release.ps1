@@ -20,6 +20,9 @@ function Run($exe, [string[]]$argv) {
   if ($LASTEXITCODE -ne 0) { throw "$exe $($argv -join ' ') failed (exit $LASTEXITCODE)" }
 }
 
+$branch = (& git rev-parse --abbrev-ref HEAD).Trim()
+if ($branch -ne 'main') { throw "YouTube Music releases come from the main branch (you're on '$branch'). Run: git checkout main" }
+
 $repo = 'KingCreeper531/youtube-music-desktop'
 $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
 

@@ -46,14 +46,30 @@ function init(opts) {
   kick();
 }
 
+/** Cover pictures for a playlist: up to four different song covers. */
+function coversOf(l) {
+  const art = new Map(library.list().map((f) => [f.id, f.art]));
+  const out = [];
+  for (const t of l.tracks) {
+    const m = t.status === 'matched' ? t.match : null;
+    const src = !m ? null : m.source === 'local' ? art.get(m.localId) : m.thumbnail;
+    if (src && !out.includes(src)) out.push(src);
+    if (out.length === 4) break;
+  }
+  return out;
+}
+
 function summary(l) {
   const matched = l.tracks.filter((t) => t.status === 'matched').length;
   const pending = l.tracks.filter((t) => t.status === 'pending' || t.status === 'searching').length;
+  const seconds = l.tracks.reduce((s, t) => s + (t.match?.duration || (t.durationMs || 0) / 1000), 0);
   return {
     id: l.id, name: l.name, source: l.source, image: l.image, created: l.created,
     total: l.tracks.length, matched, pending, notFound: l.tracks.length - matched - pending,
+    seconds: Math.round(seconds), covers: coversOf(l),
   };
 }
+
 
 function list() {
   return load().map(summary);
@@ -224,4 +240,6 @@ async function searchCandidates(query) {
   return { ytm: found, local };
 }
 
-module.exports = { init, list, get, add, remove, rename, retry, retryAllNotFound, setMatch, keys, keyOf, searchCandidates };
+module.exports = {
+  init, list, get, add, remove, rename, retry, retryAllNotFound, setMatch, keys, keyOf, searchCandidates,
+};

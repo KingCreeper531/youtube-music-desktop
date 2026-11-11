@@ -8,7 +8,7 @@ An unofficial Windows desktop app for [YouTube Music](https://music.youtube.com)
 - **SponsorBlock.** Skips the non-music intros and outros in music videos.
 - **No interruptions.** No "Are you still there?" pauses, no Premium upsell popups, and music keeps playing when the window is minimized or closed to the tray.
 - **Discord Rich Presence.** Shows "Listening to" with the song, artist, album art, a progress bar and a "Listen on YouTube Music" button. When paused, it shows "(Paused)".
-- **My Music.** Add your own MP3, M4A, FLAC, WAV, OGG or Opus files (button or drag and drop) and play them with a built-in player. They show in Discord too. Open it with the **My Music** button in the top bar or **Ctrl+L**.
+- **My Music.** Add your own MP3, M4A, FLAC, WAV, OGG or Opus files (button or drag and drop) and play them right inside YouTube Music. They show in Discord too. Open it with the **My Music** button in the top bar or **Ctrl+L**; **Esc** goes back. **Upload to YouTube Music** (on a song's ⋯ menu, or **Upload all**) puts songs in your YouTube Music library, where you can add them to any playlist like a normal song.
 - **Spotify import.** Bring your Spotify playlists and Liked Songs over (or import an exported CSV/JSON file). Each song is matched to YouTube Music, and you can play the whole playlist in the app. Open it with the **Playlists** button in the top bar or **Ctrl+I**.
 - **Song / Video switch.** Flip between a song and its music video from the player bar, picking up at the same moment. No Premium needed.
 - **Missing songs.** If a Spotify song isn't on YouTube Music as a song, the app also tries music videos and live versions, then your own files in My Music. You can also pick any match yourself.

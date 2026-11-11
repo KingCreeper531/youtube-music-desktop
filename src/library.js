@@ -143,6 +143,26 @@ function remove(id) {
   save();
 }
 
+// Formats YouTube Music accepts for uploads
+const UPLOADABLE = ['mp3', 'm4a', 'flac', 'ogg', 'oga', 'wma'];
+
+/** Files to hand to YouTube Music's uploads, named "Artist - Title.ext". */
+function filesForUpload(ids) {
+  load();
+  const clean = (s) => String(s || '').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const files = [];
+  let skipped = 0;
+  for (const id of ids) {
+    const t = tracks.find((x) => x.id === id);
+    if (!t) continue;
+    const ext = path.extname(t.file).slice(1).toLowerCase();
+    if (!UPLOADABLE.includes(ext)) { skipped++; continue; }
+    const name = [clean(t.artist), clean(t.title)].filter((x) => x && x !== 'Unknown artist').join(' - ') || id;
+    files.push({ path: path.join(filesDir(), t.file), name: `${name}.${ext}`, type: MIME[ext] || 'audio/mpeg' });
+  }
+  return { files, skipped };
+}
+
 // ------------------------------------------------- tbmedia:// file server
 function registerScheme() {
   protocol.registerSchemesAsPrivileged([{
@@ -190,4 +210,4 @@ function handleProtocol(ses) {
   });
 }
 
-module.exports = { registerScheme, handleProtocol, list, importFiles, pickAndImport, remove, AUDIO_EXT };
+module.exports = { registerScheme, handleProtocol, list, importFiles, pickAndImport, remove, filesForUpload, AUDIO_EXT };

@@ -1,7 +1,8 @@
 const {
-  app, BrowserWindow, session, ipcMain, Tray, Menu, nativeImage, shell, net, dialog,
+  app, BrowserWindow, WebContentsView, session, ipcMain, Tray, Menu, nativeImage, shell, net, dialog,
 } = require('electron');
 const path = require('path');
+const crypto = require('crypto');
 const fs = require('fs');
 const config = require('./config');
 const { DiscordPresence } = require('./discord');
@@ -382,7 +383,7 @@ function openSettings() {
 // ---------------------------------------------------------------- tray
 function sendControl(action) {
   if (queue && (action === 'next' || action === 'previous')) queueStep(action === 'next' ? 1 : -1);
-  else if (activeSource === 'local' && libraryWin) libraryWin.webContents.send('lib:control', action);
+  else if (activeSource === 'local' && libraryView) libraryView.webContents.send('lib:control', action);
   else win?.webContents.send('tb:control', action);
 }
 
@@ -397,8 +398,9 @@ const isLocalKey = (k) => !!k && k.startsWith('l:');
 function setQueueFlag() {
   const k = currentKey();
   win?.webContents.send('tb:queue', !!queue && !isLocalKey(k));
-  libraryWin?.webContents.send('lib:queue', !!queue && isLocalKey(k));
-  playlistsWin?.webContents.send('pl:queue', queue && { playlistId: queue.playlistId, key: k });
+  libraryView?.webContents.send('lib:queue', !!queue && isLocalKey(k));
+  const q = queue && { playlistId: queue.playlistId, key: k };
+  playlistsWin?.webContents.send('pl:queue', q);
 }
 
 function leaveQueue(why) {
@@ -435,7 +437,7 @@ async function queueLoad() {
     const lw = await ensureLibrary();
     lw.webContents.send('lib:control', `playid:${k.slice(2)}`);
   } else {
-    if (localNp && !localNp.paused) libraryWin?.webContents.send('lib:control', 'pause');
+    if (localNp && !localNp.paused) libraryView?.webContents.send('lib:control', 'pause');
     activeSource = 'ytm';
     if (!win) createWindow();
     win.loadURL(`https://music.youtube.com/watch?v=${k.slice(2)}`);
@@ -447,7 +449,7 @@ function queueStep(dir) {
   if (!queue) return;
   const k = currentKey();
   if (dir < 0) { // like a normal player: restart the song first
-    if (isLocalKey(k) && localNp && localNp.currentTime > 3) { libraryWin?.webContents.send('lib:control', 'restart'); return; }
+    if (isLocalKey(k) && localNp && localNp.currentTime > 3) { libraryView?.webContents.send('lib:control', 'restart'); return; }
     if (!isLocalKey(k) && ytmNp && ytmNp.currentTime > 3) { win?.webContents.send('tb:control', 'restart'); return; }
   }
   const next = queue.index + dir;
@@ -529,9 +531,9 @@ function queueOnLocalEnded(id) {
 
 /** Makes sure the My Music player exists (hidden if it wasn't open) and has loaded. */
 function ensureLibrary() {
-  if (libraryWin && !libraryWin.webContents.isLoading()) return Promise.resolve(libraryWin);
-  if (!libraryWin) openLibrary({ show: false });
-  return new Promise((resolve) => libraryWin.webContents.once('did-finish-load', () => resolve(libraryWin)));
+  if (libraryView && !libraryView.webContents.isLoading()) return Promise.resolve(libraryView);
+  if (!libraryView) openLibrary({ show: false });
+  return new Promise((resolve) => libraryView.webContents.once('did-finish-load', () => resolve(libraryView)));
 }
 
 // ---------------------------------------------------------------- Playlists window
@@ -564,44 +566,78 @@ function openPlaylists() {
 }
 
 // ---------------------------------------------------------------- My Music
-let libraryWin = null;
-function openLibrary({ show = true } = {}) {
-  if (libraryWin) { if (show) { libraryWin.show(); libraryWin.focus(); } return; }
-  libraryWin = new BrowserWindow({
-    width: 1000,
-    height: 680,
-    minWidth: 560,
-    minHeight: 400,
-    title: 'My Music',
-    icon: ICON,
-    backgroundColor: '#030303',
-    autoHideMenuBar: true,
-    show,
+// Part of the YouTube Music window: a panel over the page, just below YouTube
+// Music's top bar. Leaving it only hides it, so your song keeps playing.
+let libraryView = null;
+let libraryShown = false;
+let navBarHeight = 64; // CSS pixels; the page reports the real value
+
+function layoutLibrary() {
+  if (!libraryView || !win) return;
+  const [w, h] = win.getContentSize();
+  const top = Math.round(navBarHeight * win.webContents.getZoomFactor());
+  libraryView.setBounds({ x: 0, y: top, width: w, height: Math.max(0, h - top) });
+}
+
+function createLibraryView() {
+  if (!win) createWindow();
+  libraryView = new WebContentsView({
     webPreferences: {
       preload: path.join(__dirname, 'library-preload.js'),
       contextIsolation: true,
       sandbox: true,
-      backgroundThrottling: false,
+      backgroundThrottling: false, // keep playing while hidden
       autoplayPolicy: 'no-user-gesture-required', // playlists can start your files without a click
     },
   });
-  libraryWin.setMenuBarVisibility(false);
-  libraryWin.loadFile(path.join(__dirname, 'library.html'));
-  // Closing while a song plays just hides the window so the music keeps going.
-  libraryWin.on('close', (e) => {
-    if (!quitting && localNp && !localNp.paused) {
-      e.preventDefault();
-      libraryWin.hide();
-    }
+  libraryView.setBackgroundColor('#030303');
+  libraryView.setVisible(false);
+  win.contentView.addChildView(libraryView);
+  libraryView.webContents.loadFile(path.join(__dirname, 'library.html'));
+  // Files dropped outside the drop zone must not navigate the panel away
+  libraryView.webContents.on('will-navigate', (e) => e.preventDefault());
+  libraryView.webContents.on('before-input-event', (e, input) => {
+    if (input.type !== 'keyDown') return;
+    if (input.key === 'Escape' || (input.control && input.key.toLowerCase() === 'l')) { e.preventDefault(); hideLibrary(); }
+    else if (input.control && input.key === ',') openSettings();
+    else if (input.control && input.key.toLowerCase() === 'i') openPlaylists();
   });
-  libraryWin.on('show', onWindowHiddenChanged);
-  libraryWin.on('hide', onWindowHiddenChanged);
-  libraryWin.on('closed', () => {
-    libraryWin = null;
-    onLocalState(null);
+  win.on('resize', layoutLibrary);
+  win.once('closed', () => { libraryView = null; libraryShown = false; });
+  layoutLibrary();
+}
+
+function openLibrary({ show = true } = {}) {
+  if (!libraryView) createLibraryView();
+  if (!show) return;
+  showWindow();
+  layoutLibrary();
+  libraryView.setVisible(true);
+  libraryShown = true;
+  libraryView.webContents.focus();
+  sendLibraryState();
+}
+
+function hideLibrary() {
+  if (!libraryView || !libraryShown) return;
+  libraryView.setVisible(false);
+  libraryShown = false;
+  win?.webContents.focus();
+  sendLibraryState();
+}
+
+function toggleLibrary() {
+  if (libraryShown) hideLibrary(); else openLibrary();
+}
+
+// Tells the page's My Music button whether the panel is open and what's playing
+function sendLibraryState() {
+  win?.webContents.send('tb:library-state', {
+    open: libraryShown,
+    playing: !!(localNp && !localNp.paused),
+    title: localNp?.title || '',
+    artist: localNp?.artist || '',
   });
-  // Files dropped outside the drop zone must not navigate the window away
-  libraryWin.webContents.on('will-navigate', (e) => e.preventDefault());
 }
 
 function updateTray() {
@@ -692,15 +728,19 @@ function onYtmState(np) {
   ytmNp = np;
   queueOnState(np);
   if (np && !np.paused) {
-    if (localNp && !localNp.paused) libraryWin?.webContents.send('lib:control', 'pause');
+    if (localNp && !localNp.paused) libraryView?.webContents.send('lib:control', 'pause');
     activeSource = 'ytm';
   }
   if (activeSource === 'ytm') onNowPlaying(np);
 }
 
 function onLocalState(np) {
+  const wasPlaying = !!(localNp && !localNp.paused);
+  const oldTitle = localNp?.title;
   localNp = np;
   queueOnLocalState(np);
+  // Keep the My Music button in the top bar showing what's playing
+  if (wasPlaying !== !!(np && !np.paused) || oldTitle !== np?.title) sendLibraryState();
   if (np && !np.paused) {
     if (ytmNp && !ytmNp.paused) win?.webContents.send('tb:control', 'pause');
     activeSource = 'local';
@@ -760,7 +800,10 @@ async function getSegments(videoId) {
 // ---------------------------------------------------------------- IPC
 ipcMain.on('tb:get-config', (e) => { e.returnValue = config.load(); });
 ipcMain.on('tb:now-playing', (_e, np) => onYtmState(np));
-ipcMain.on('tb:open-library', () => openLibrary());
+ipcMain.on('tb:open-library', () => toggleLibrary());
+ipcMain.on('lib:close', () => hideLibrary());
+ipcMain.on('tb:navbar-height', (_e, h) => { const n = Number(h); if (n > 20 && n < 200 && n !== navBarHeight) { navBarHeight = n; layoutLibrary(); } });
+ipcMain.handle('tb:library-state', () => ({ open: libraryShown, playing: !!(localNp && !localNp.paused), title: localNp?.title || '', artist: localNp?.artist || '' }));
 ipcMain.on('tb:open-playlists', () => openPlaylists());
 ipcMain.on('tb:ended', (_e, videoId) => queueOnEnded(videoId));
 ipcMain.on('tb:queue-step', (_e, dir) => queueStep(dir > 0 ? 1 : -1));
@@ -772,6 +815,35 @@ ipcMain.handle('pl:get', (_e, id) => playlists.get(String(id)));
 ipcMain.handle('pl:remove', (_e, id) => { if (queue?.playlistId === id) { queue = null; setQueueFlag(); } playlists.remove(String(id)); });
 ipcMain.handle('pl:rename', (_e, id, name) => playlists.rename(String(id), String(name)));
 ipcMain.handle('pl:retry', (_e, id) => playlists.retry(String(id)));
+// Upload My Music songs to your YouTube Music library (its own uploads feature).
+// Uploaded songs show up in Library > Uploads and work in any YouTube Music playlist.
+const uploadWaits = new Map();
+ipcMain.on('tb:upload-result', (_e, res) => {
+  const done = uploadWaits.get(res?.reqId);
+  if (done) { uploadWaits.delete(res.reqId); done(res); }
+});
+function dropOnPage(files) {
+  return new Promise((resolve) => {
+    const reqId = crypto.randomUUID();
+    const timer = setTimeout(() => { uploadWaits.delete(reqId); resolve({ ok: false, error: 'YouTube Music didn\'t respond' }); }, 20000);
+    uploadWaits.set(reqId, (res) => { clearTimeout(timer); resolve(res); });
+    win.webContents.send('tb:upload-files', { reqId, files });
+  });
+}
+ipcMain.handle('lib:upload-ytm', async (_e, ids) => {
+  if (!win || !Array.isArray(ids)) return { ok: false, error: 'YouTube Music isn\'t open' };
+  const { files, skipped } = library.filesForUpload(ids.map(String));
+  if (!files.length) return { ok: false, error: 'YouTube Music only takes MP3, M4A, FLAC, OGG and WMA files' };
+  let sent = 0;
+  for (let i = 0; i < files.length; i += 5) { // a few files at a time
+    const batch = files.slice(i, i + 5).map((f) => ({ name: f.name, type: f.type, data: fs.readFileSync(f.path) }));
+    const res = await dropOnPage(batch);
+    if (!res.ok) return { ok: false, error: res.error, sent };
+    sent += batch.length;
+  }
+  log(`Sent ${sent} song(s) to YouTube Music uploads${skipped ? `, skipped ${skipped} unsupported` : ''}`);
+  return { ok: true, sent, skipped };
+});
 ipcMain.handle('pl:play', (_e, opts) => playPlaylist({ id: String(opts?.id), key: opts?.key ? String(opts.key) : null, shuffle: !!opts?.shuffle }));
 ipcMain.handle('pl:queue', () => queue && { playlistId: queue.playlistId, key: currentKey() });
 ipcMain.handle('tb:switch-version', (_e, info) => switchVersion(info));
@@ -826,7 +898,7 @@ ipcMain.on('lib:now-playing', (_e, np) => onLocalState(np));
 ipcMain.handle('lib:list', () => library.list());
 // New files in My Music may be songs your imported playlists were missing
 const afterLibraryAdd = (res) => { if (res?.added) playlists.retryAllNotFound(); return res; };
-ipcMain.handle('lib:add', async () => afterLibraryAdd(await library.pickAndImport(libraryWin || win)));
+ipcMain.handle('lib:add', async () => afterLibraryAdd(await library.pickAndImport(win)));
 ipcMain.handle('lib:add-paths', async (_e, paths) => {
   if (!Array.isArray(paths)) return { added: 0, skipped: 0 };
   return afterLibraryAdd(await library.importFiles(paths.filter((p) => typeof p === 'string' && p.length < 1024)));
@@ -890,7 +962,9 @@ app.whenReady().then(async () => {
   spotify.setClientId(config.get('spotifyClientId'));
   playlists.init({
     log,
-    onChange: (ev) => playlistsWin?.webContents.send('pl:changed', ev),
+    onChange: (ev) => {
+      playlistsWin?.webContents.send('pl:changed', ev);
+    },
   });
   // Developer test hook: import a playlist export file on startup
   if (process.env.TUNEBOX_IMPORT_PLAYLIST) {

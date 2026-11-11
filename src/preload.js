@@ -500,8 +500,74 @@ function renderUpdateButton() {
 
 ipcRenderer.on('tb:update', (_e, s) => { updateState = s; renderUpdateButton(); });
 ipcRenderer.invoke('tb:update-get').then((s) => { updateState = s; renderUpdateButton(); }).catch(() => {});
+// ---------------------------------------------- upload My Music songs to YouTube Music
+// YouTube Music uploads files dropped onto the page (when you're signed in). Hand
+// it the files the same way, so they go through its own uploads feature.
+ipcRenderer.on('tb:upload-files', (_e, { reqId, files }) => {
+  const reply = (r) => ipcRenderer.send('tb:upload-result', { reqId, ...r });
+  try {
+    const signedOut = document.querySelector('a.sign-in-link, ytmusic-nav-bar a[href*="ServiceLogin"]');
+    if (signedOut || !document.querySelector('ytmusic-settings-button')) {
+      reply({ ok: false, error: 'Sign in to YouTube Music first, then try again' });
+      return;
+    }
+    const dt = new DataTransfer();
+    for (const f of files) dt.items.add(new File([f.data], f.name, { type: f.type }));
+    const target = document.querySelector('ytmusic-app') || document.body;
+    const r = target.getBoundingClientRect();
+    const at = { clientX: Math.round(r.left + r.width / 2), clientY: Math.round(r.top + r.height / 2) };
+    for (const type of ['dragenter', 'dragover', 'drop']) {
+      target.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, composed: true, dataTransfer: dt, ...at }));
+    }
+    reply({ ok: true });
+  } catch (err) {
+    reply({ ok: false, error: `Upload failed: ${err.message}` });
+  }
+});
+
 // ---------------------------------------------------------- My Music button
 const LIB_BTN_ID = 'tb-library-button';
+// open: the My Music panel is showing; playing/title: one of your songs is playing
+let libraryState = { open: false, playing: false, title: '', artist: '' };
+
+function paintLibraryButton(btn) {
+  if (!btn) return;
+  const span = btn.querySelector('span');
+  const s = libraryState;
+  if (s.open) {
+    btn.style.background = '#fff';
+    btn.style.color = '#000';
+    btn.style.borderColor = '#fff';
+  } else {
+    btn.style.background = 'transparent';
+    btn.style.color = '#fff';
+    btn.style.borderColor = 'rgba(255,255,255,.2)';
+  }
+  // While one of your songs plays, the button shows it, so it's easy to get back to
+  const label = !s.open && s.playing && s.title ? (s.title.length > 22 ? `${s.title.slice(0, 21)}…` : s.title) : 'My Music';
+  if (span && span.textContent !== label) span.textContent = label;
+  btn.title = s.open ? 'Back to YouTube Music (Esc)'
+    : s.playing ? `Playing from My Music: ${s.title}${s.artist ? ` by ${s.artist}` : ''}`
+    : 'Your own music files (Ctrl+L)';
+}
+
+ipcRenderer.on('tb:library-state', (_e, s) => {
+  libraryState = s || libraryState;
+  paintLibraryButton(document.getElementById(LIB_BTN_ID));
+});
+ipcRenderer.invoke('tb:library-state').then((s) => { libraryState = s || libraryState; }).catch(() => {});
+
+// Tell the app how tall the top bar is, so the My Music panel sits right below it
+let lastNavHeight = 0;
+setInterval(() => {
+  const nav = document.querySelector('ytmusic-nav-bar');
+  if (!nav) return;
+  const h = Math.round(nav.getBoundingClientRect().bottom);
+  if (h > 0 && h !== lastNavHeight) {
+    lastNavHeight = h;
+    ipcRenderer.send('tb:navbar-height', h);
+  }
+}, 1000);
 function renderLibraryButton() {
   const host = document.querySelector('ytmusic-nav-bar #right-content');
   if (!host) return;
@@ -517,8 +583,8 @@ function renderLibraryButton() {
       'background:transparent', 'color:#fff', 'font:500 14px/1 Roboto,"Segoe UI",sans-serif',
       'cursor:pointer', 'white-space:nowrap', 'transition:background .15s',
     ].join(';');
-    btn.addEventListener('mouseenter', () => { btn.style.background = 'rgba(255,255,255,.1)'; });
-    btn.addEventListener('mouseleave', () => { btn.style.background = 'transparent'; });
+    btn.addEventListener('mouseenter', () => { if (!libraryState.open) btn.style.background = 'rgba(255,255,255,.1)'; });
+    btn.addEventListener('mouseleave', () => paintLibraryButton(btn));
     btn.addEventListener('click', () => ipcRenderer.send('tb:open-library'));
     const NS = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(NS, 'svg');
@@ -532,6 +598,7 @@ function renderLibraryButton() {
     const span = document.createElement('span');
     span.textContent = 'My Music';
     btn.append(svg, span);
+    paintLibraryButton(btn);
   }
   // Keep it just right of the Update button (or first in the bar when there's no update)
   const upd = document.getElementById(UPDATE_BTN_ID);

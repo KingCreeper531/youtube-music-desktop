@@ -12,4 +12,8 @@ contextBridge.exposeInMainWorld('library', {
   reportEnded: (id) => ipcRenderer.send('lib:ended', id),
   queueStep: (dir) => ipcRenderer.send('lib:queue-step', dir),
   queueExit: () => ipcRenderer.send('lib:queue-exit'),
+  close: () => ipcRenderer.send('lib:close'), // back to YouTube Music (the song keeps playing)
+  // Uploads songs to your YouTube Music library (Library > Uploads), where they
+  // work like any other song, including in your YouTube Music playlists
+  uploadToYtm: (ids) => ipcRenderer.invoke('lib:upload-ytm', ids),
 });
