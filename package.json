@@ -1,7 +1,7 @@
 {
   "name": "tunebox",
   "productName": "YouTube Music",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "description": "Ad-free YouTube Music desktop app with SponsorBlock and Discord Rich Presence",
   "main": "src/main.js",
   "author": "Personal build",

@@ -64,7 +64,8 @@ $assets = @(
 foreach ($a in $assets) { if (-not (Test-Path $a)) { throw "Missing build output: $a" } }
 
 # Commit and push the source for this version.
-Run git @('add', '-A')
+# The Ranch Launcher has its own repo and release script; never sweep its folder in here.
+Run git @('add', '-A', '--', '.', ':(exclude)launcher')
 & git diff --cached --quiet
 if ($LASTEXITCODE -ne 0) { Run git @('commit', '-m', "Release v$version") }
 Run git @('push', 'origin', 'HEAD')
